@@ -196,10 +196,6 @@ const DashboardPage = () => {
     }
   };
 
-  const handleViewRecommendations = () => {
-    navigate('/recommendations');
-  };
-
   const getEmissionsByCategory = () => {
     if (!carbonScore) return [];
     
@@ -367,18 +363,6 @@ const DashboardPage = () => {
                         </span>
                       </div>
                     </div>
-                  </div>
-
-                  <div className="flex justify-center mt-6">
-                    <motion.button
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
-                      onClick={handleViewRecommendations}
-                      className="bg-emerald-800/90 px-6 py-3 rounded-lg inline-flex items-center justify-center gap-2 hover:bg-emerald-700/90 border border-emerald-600/30 transition-colors font-mono text-emerald-300 w-full md:w-auto"
-                    >
-                      <span>View Recommendations</span>
-                      <ArrowRight className="w-4 h-4 transform group-hover:translate-x-1 transition-transform" />
-                    </motion.button>
                   </div>
                 </div>
 

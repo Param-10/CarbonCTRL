@@ -6,7 +6,6 @@ import {
   LogOut, 
   Leaf,
   LineChart,
-  TreePine,
   Menu,
   X,
   Building2
@@ -23,7 +22,6 @@ export default function Layout() {
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
     { name: 'Recommendations', href: '/recommendations', icon: LineChart },
-    { name: 'Offset Projects', href: '/offset-projects', icon: TreePine },
     { name: 'Company Profile', href: '/company-profile', icon: Building2 },
     { name: 'Settings', href: '/settings', icon: Settings },
   ];

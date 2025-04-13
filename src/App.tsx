@@ -9,7 +9,6 @@ import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
 import DashboardPage from './pages/DashboardPage';
 import RecommendationsPage from './pages/RecommendationsPage';
-import OffsetProjectsPage from './pages/OffsetProjectsPage';
 import SettingsPage from './pages/SettingsPage';
 import CompanyProfilePage from './pages/CompanyProfilePage';
 
@@ -65,7 +64,6 @@ function App() {
         >
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/recommendations" element={<RecommendationsPage />} />
-          <Route path="/offset-projects" element={<OffsetProjectsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/company-profile" element={<CompanyProfilePage />} />
         </Route>
