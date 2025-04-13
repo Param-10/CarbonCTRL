@@ -72,9 +72,9 @@ const RecommendationsPage = () => {
           </p>
           <a
             href="/dashboard"
-            className="glass-button px-6 py-3 rounded-lg inline-flex items-center gap-2 group"
+            className="bg-emerald-800/90 px-6 py-3 rounded-lg inline-flex items-center gap-2 group hover:bg-emerald-700/90 border border-emerald-600/30 transition-all duration-300 font-mono text-emerald-300"
           >
-            <span className="font-mono">Start Assessment</span>
+            <span>Start Assessment</span>
             <ArrowRight className="w-5 h-5 transform group-hover:translate-x-1 transition-transform" />
           </a>
         </motion.div>

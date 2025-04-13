@@ -105,30 +105,25 @@ const EmptyState = ({ onAddActivity }: { onAddActivity: () => void }) => (
     <p className="font-mono text-emerald-100/70 max-w-md mx-auto mb-8">
       Start by adding your first activity. We'll help you track and analyze your organization's environmental footprint.
     </p>
-    <div className="space-x-4">
+    <div className="space-x-4 flex flex-wrap justify-center">
       <motion.button
         whileHover={{ scale: 1.05 }}
         whileTap={{ scale: 0.95 }}
         onClick={onAddActivity}
-        className="bg-white text-gray-900 px-6 py-3 rounded-lg inline-flex items-center gap-3 group font-mono hover:bg-gray-100 transition-colors"
+        className="bg-emerald-800/90 px-6 py-3 rounded-lg inline-flex items-center gap-3 group hover:bg-emerald-700/90 border border-emerald-600/30 transition-all duration-300"
       >
-        <Plus className="w-5 h-5" />
-        <span>Add Your First Activity</span>
+        <Plus className="w-5 h-5 text-emerald-300 group-hover:text-emerald-200" />
+        <span className="font-mono text-emerald-300 group-hover:text-emerald-200">Add Your First Activity</span>
       </motion.button>
-      <a
-        href="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-block"
+      <motion.button
+        whileHover={{ scale: 1.05 }}
+        whileTap={{ scale: 0.95 }}
+        onClick={() => window.open("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "_blank")}
+        className="bg-emerald-800/90 px-6 py-3 rounded-lg inline-flex items-center gap-3 group hover:bg-emerald-700/90 border border-emerald-600/30 transition-all duration-300"
       >
-        <motion.button
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-          className="bg-white text-gray-900 px-6 py-3 rounded-lg inline-flex items-center gap-3 group font-mono hover:bg-gray-100 transition-colors"
-        >
-          <span>Watch Demo</span>
-        </motion.button>
-      </a>
+        <ArrowRight className="w-5 h-5 text-emerald-300 group-hover:text-emerald-200" />
+        <span className="font-mono text-emerald-300 group-hover:text-emerald-200">Watch Demo</span>
+      </motion.button>
     </div>
   </motion.div>
 );
@@ -238,7 +233,7 @@ const DashboardPage = () => {
           <Tooltip 
             formatter={(value) => [`${value.toFixed(1)} tCO₂e`, 'Emissions']}
             contentStyle={{ 
-              backgroundColor: 'rgba(0, 0, 0, 0.8)', 
+              backgroundColor: 'rgba(4, 120, 87, 0.9)', 
               border: '1px solid #10b981',
               borderRadius: '0.5rem',
               color: '#fff',
@@ -263,7 +258,7 @@ const DashboardPage = () => {
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
           onClick={() => setIsModalOpen(true)}
-          className="glass-button px-6 py-3 rounded-lg flex items-center gap-3 group bg-emerald-500/20 hover:bg-emerald-500/30 transition-all duration-300"
+          className="bg-emerald-800/90 px-6 py-3 rounded-lg flex items-center gap-3 group hover:bg-emerald-700/90 border border-emerald-600/30 transition-all duration-300"
         >
           <Plus className="w-5 h-5 text-emerald-300 group-hover:text-emerald-200" />
           <span className="font-mono text-emerald-300 group-hover:text-emerald-200">Add Activity</span>
@@ -285,7 +280,7 @@ const DashboardPage = () => {
                 {activities.map((activity) => (
                   <div
                     key={activity.id}
-                    className="flex items-center justify-between p-4 bg-gray-800/50 rounded-lg border border-emerald-500/20"
+                    className="flex items-center justify-between p-4 bg-emerald-800/90 rounded-lg border border-emerald-600/30"
                   >
                     <div>
                       <p className="font-mono text-white">
@@ -316,7 +311,7 @@ const DashboardPage = () => {
                     whileTap={{ scale: 0.95 }}
                     onClick={handleSubmit}
                     disabled={loading}
-                    className="glass-button px-6 py-2 rounded-lg font-mono text-sm bg-emerald-500/20 hover:bg-emerald-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="bg-emerald-800/90 px-6 py-2 rounded-lg font-mono text-sm hover:bg-emerald-700/90 border border-emerald-600/30 text-emerald-300 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {loading ? 'Calculating...' : 'Calculate Score'}
                   </motion.button>
@@ -345,7 +340,7 @@ const DashboardPage = () => {
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-                    <div className="bg-gray-800/50 p-4 rounded-lg border border-emerald-500/20">
+                    <div className="bg-emerald-800/90 p-4 rounded-lg border border-emerald-600/30">
                       <p className="font-mono text-sm text-emerald-100/70 mb-2">Total Emissions</p>
                       <div className="flex items-baseline">
                         <span className="font-space text-3xl font-bold text-white">
@@ -355,7 +350,7 @@ const DashboardPage = () => {
                       </div>
                     </div>
 
-                    <div className="bg-gray-800/50 p-4 rounded-lg border border-emerald-500/20">
+                    <div className="bg-emerald-800/90 p-4 rounded-lg border border-emerald-600/30">
                       <p className="font-mono text-sm text-emerald-100/70 mb-2">Carbon Rating</p>
                       <div className="flex items-baseline">
                         <span className="font-space text-3xl font-bold text-white">
@@ -364,7 +359,7 @@ const DashboardPage = () => {
                       </div>
                     </div>
 
-                    <div className="bg-gray-800/50 p-4 rounded-lg border border-emerald-500/20">
+                    <div className="bg-emerald-800/90 p-4 rounded-lg border border-emerald-600/30">
                       <p className="font-mono text-sm text-emerald-100/70 mb-2">Performance</p>
                       <div className="flex items-baseline">
                         <span className="font-space text-xl font-bold text-white">
@@ -379,7 +374,7 @@ const DashboardPage = () => {
                       whileHover={{ scale: 1.05 }}
                       whileTap={{ scale: 0.95 }}
                       onClick={handleViewRecommendations}
-                      className="glass-button px-6 py-3 rounded-lg inline-flex items-center justify-center gap-2 bg-emerald-500/20 hover:bg-emerald-500/30 transition-colors font-mono w-full md:w-auto"
+                      className="bg-emerald-800/90 px-6 py-3 rounded-lg inline-flex items-center justify-center gap-2 hover:bg-emerald-700/90 border border-emerald-600/30 transition-colors font-mono text-emerald-300 w-full md:w-auto"
                     >
                       <span>View Recommendations</span>
                       <ArrowRight className="w-4 h-4 transform group-hover:translate-x-1 transition-transform" />
@@ -413,7 +408,7 @@ const DashboardPage = () => {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50"
+            className="fixed inset-0 bg-emerald-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-50"
             onClick={() => setIsModalOpen(false)}
           >
             <motion.div
@@ -421,13 +416,13 @@ const DashboardPage = () => {
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
               onClick={(e) => e.stopPropagation()}
-              className="bg-gray-800 rounded-xl p-6 w-full max-w-lg"
+              className="bg-emerald-800/90 rounded-xl p-6 w-full max-w-lg border border-emerald-600/30"
             >
               <div className="flex justify-between items-center mb-6">
                 <h2 className="font-space text-xl font-semibold text-white">Add Carbon Activity</h2>
                 <button
                   onClick={() => setIsModalOpen(false)}
-                  className="text-gray-400 hover:text-white transition-colors"
+                  className="text-emerald-400 hover:text-emerald-300 transition-colors"
                 >
                   <X className="w-6 h-6" />
                 </button>
@@ -451,7 +446,7 @@ const DashboardPage = () => {
                       setSelectedSector(e.target.value);
                       setSelectedSubsector('');
                     }}
-                    className="w-full bg-gray-700/50 border border-emerald-500/30 rounded-lg py-3 px-4 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
+                    className="w-full bg-emerald-700/50 border border-emerald-500/30 rounded-lg py-3 px-4 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
                   >
                     <option value="">-- Select Sector --</option>
                     {Object.keys(sectors).map((sector) => (
@@ -470,7 +465,7 @@ const DashboardPage = () => {
                     <select
                       value={selectedSubsector}
                       onChange={(e) => setSelectedSubsector(e.target.value)}
-                      className="w-full bg-gray-700/50 border border-emerald-500/30 rounded-lg py-3 px-4 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
+                      className="w-full bg-emerald-700/50 border border-emerald-500/30 rounded-lg py-3 px-4 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
                     >
                       <option value="">-- Select Activity Type --</option>
                       {sectors[selectedSector]?.map((subsector) => (
@@ -492,14 +487,14 @@ const DashboardPage = () => {
                       value={activityAmount}
                       onChange={(e) => setActivityAmount(e.target.value)}
                       placeholder="Enter amount"
-                      className="w-full bg-gray-700/50 border border-emerald-500/30 rounded-lg py-3 px-4 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
+                      className="w-full bg-emerald-700/50 border border-emerald-500/30 rounded-lg py-3 px-4 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
                     />
                   </div>
                 )}
 
                 <button
                   onClick={handleAddActivity}
-                  className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-mono text-sm py-3 rounded-lg transition-colors mt-6"
+                  className="w-full bg-emerald-800/90 hover:bg-emerald-700/90 text-emerald-300 font-mono text-sm py-3 rounded-lg transition-colors mt-6 border border-emerald-600/30"
                 >
                   Add Activity
                 </button>

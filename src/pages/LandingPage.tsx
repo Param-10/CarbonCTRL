@@ -25,7 +25,7 @@ const LandingPage = () => {
               </Link>
               <Link
                 to="/auth"
-                className="glass-button font-mono px-6 py-2 rounded-lg flex items-center gap-2 group"
+                className="bg-emerald-800/90 px-6 py-2 rounded-lg flex items-center gap-2 group hover:bg-emerald-700/90 border border-emerald-600/30 transition-all duration-300 font-mono text-emerald-300 group-hover:text-emerald-200"
               >
                 Get Started
                 <ArrowRight className="w-4 h-4 transform group-hover:translate-x-1 transition-transform" />
@@ -51,7 +51,7 @@ const LandingPage = () => {
             </p>
             <Link
               to="/auth"
-              className="glass-button inline-flex items-center gap-3 px-8 py-4 rounded-lg text-lg font-mono group text-white"
+              className="bg-emerald-800/90 px-8 py-4 rounded-lg inline-flex items-center gap-3 group hover:bg-emerald-700/90 border border-emerald-600/30 transition-all duration-300 font-mono text-emerald-300 text-lg"
             >
               Start Your Journey
               <ArrowRight className="w-5 h-5 transform group-hover:translate-x-1 transition-transform" />
@@ -143,7 +143,7 @@ const LandingPage = () => {
             </p>
             <Link
               to="/auth"
-              className="glass-button inline-flex items-center gap-3 px-8 py-4 rounded-lg text-lg font-mono group text-white"
+              className="bg-emerald-800/90 px-8 py-4 rounded-lg inline-flex items-center gap-3 group hover:bg-emerald-700/90 border border-emerald-600/30 transition-all duration-300 font-mono text-emerald-300 text-lg"
             >
               Create Your Account
               <ArrowRight className="w-5 h-5 transform group-hover:translate-x-1 transition-transform" />

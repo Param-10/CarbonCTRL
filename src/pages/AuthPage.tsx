@@ -91,7 +91,7 @@ export default function AuthPage() {
 
             <button
               type="submit"
-              className="w-full bg-emerald-500 text-white py-3 px-6 rounded-lg font-semibold hover:bg-emerald-600 transition-colors duration-200 flex items-center justify-center gap-2 group"
+              className="w-full bg-emerald-800/90 text-emerald-300 py-3 px-6 rounded-lg hover:bg-emerald-700/90 border border-emerald-600/30 transition-all duration-300 flex items-center justify-center gap-2 group"
             >
               <span className="font-space">{isSignIn ? 'Sign In' : 'Create Account'}</span>
               <ArrowRight className="w-5 h-5 transform group-hover:translate-x-1 transition-transform" />

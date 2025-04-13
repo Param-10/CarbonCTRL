@@ -201,13 +201,13 @@ const OffsetProjectsPage = () => {
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="fixed inset-0 flex items-center justify-center z-50 p-4 bg-gray-900/80"
+          className="fixed inset-0 flex items-center justify-center z-50 p-4 bg-emerald-900/80 backdrop-blur-sm"
           onClick={() => setSelectedProject(null)}
         >
           <motion.div
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-gray-800 rounded-xl overflow-hidden max-w-4xl w-full max-h-[90vh] overflow-y-auto"
+            className="bg-emerald-800/90 rounded-xl overflow-hidden max-w-4xl w-full max-h-[90vh] overflow-y-auto border border-emerald-600/30"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="h-64 overflow-hidden relative">
@@ -216,9 +216,9 @@ const OffsetProjectsPage = () => {
                 alt={selectedProject.name} 
                 className="w-full h-full object-cover"
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-gray-800 to-transparent"></div>
+              <div className="absolute inset-0 bg-gradient-to-t from-emerald-800/95 to-transparent"></div>
               <button 
-                className="absolute top-4 right-4 bg-gray-800/80 p-2 rounded-full text-white hover:bg-gray-700/80 transition-colors"
+                className="absolute top-4 right-4 bg-emerald-700/80 p-2 rounded-full text-emerald-300 hover:bg-emerald-600/90 transition-colors border border-emerald-600/30"
                 onClick={() => setSelectedProject(null)}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -295,7 +295,7 @@ const OffsetProjectsPage = () => {
                   Visit Official Website
                 </a>
                 
-                <button className="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-mono text-sm py-3 rounded-lg transition-colors flex items-center justify-center gap-2">
+                <button className="flex-1 bg-emerald-800/90 hover:bg-emerald-700/90 text-emerald-300 font-mono text-sm py-3 rounded-lg transition-colors flex items-center justify-center gap-2 border border-emerald-600/30">
                   <Heart className="w-4 h-4" />
                   Save to Favorites
                 </button>
