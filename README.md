@@ -1,10 +1,6 @@
 # CarbonCTRL
 
 <p align="center">
-  <img src="https://images.unsplash.com/photo-1604187351574-c75ca79f5807?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80" alt="CarbonCTRL" width="500" />
-</p>
-
-<p align="center">
   <b>Smart carbon management for forward-thinking businesses</b>
 </p>
 
