@@ -28,3 +28,6 @@ var/
 # Mac OS specific files
 .DS_Store
 .env
+
+#ingore the nodemodules
+node_modules/
