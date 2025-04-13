@@ -1,0 +1,33 @@
+# Ignore datasets directory
+datasets/
+
+# Ignore Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Other common Python ignores
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Mac OS specific files
+.DS_Store
+.env
+
+#ingore the nodemodules
+node_modules/
