@@ -72,7 +72,7 @@ const LandingPage = () => {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-8 justify-items-center">
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -104,23 +104,6 @@ const LandingPage = () => {
               </h3>
               <p className="font-mono text-emerald-100/70">
                 Connect with eco-friendly projects worldwide and make a real difference in fighting climate change.
-              </p>
-            </motion.div>
-
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.3 }}
-              className="feature-card p-8 rounded-xl"
-            >
-              <div className="bg-emerald-500/20 p-4 rounded-lg w-fit mb-6">
-                <TreePine className="w-6 h-6 text-emerald-400" />
-              </div>
-              <h3 className="font-space text-xl font-semibold text-white mb-4">
-                Offset Projects
-              </h3>
-              <p className="font-mono text-emerald-100/70">
-                Support verified carbon offset projects and track your contribution to global sustainability.
               </p>
             </motion.div>
           </div>

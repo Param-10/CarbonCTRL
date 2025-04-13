@@ -1,0 +1,10 @@
+/node_modules/
+/build/
+/dist/
+/src/assets/images/*
+/.DS_Store
+.env
+/.env.local
+/.env.development.local
+.DS_Store
+/DS_Store

@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Sphere, Stars, Trail, useTexture } from '@react-three/drei';
 import * as THREE from 'three';
@@ -9,6 +9,77 @@ export default function Earth3D() {
   const cloudsRef = useRef<THREE.Mesh>(null);
   const particlesRef = useRef<THREE.Points>(null);
   const satelliteRef = useRef<THREE.Mesh>(null);
+
+  // Optimize geometries by creating them once with useMemo
+  const geometries = useMemo(() => {
+    return {
+      sphere: new THREE.SphereGeometry(1, 32, 32), // Reduced segments from 64 to 32
+      atmosphere: new THREE.SphereGeometry(1.2, 24, 24), // Reduced segments
+      clouds: new THREE.SphereGeometry(1.1, 24, 24), // Reduced segments
+      torus: new THREE.TorusGeometry(1.8, 0.1, 16, 50), // Reduced segments from 100 to 50
+      satellite: new THREE.BoxGeometry(0.1, 0.1, 0.2)
+    };
+  }, []);
+
+  // Optimize materials by creating them once with useMemo
+  const materials = useMemo(() => {
+    return {
+      earth: new THREE.MeshPhysicalMaterial({
+        color: "#10b981",
+        emissive: "#059669",
+        emissiveIntensity: 0.6,
+        metalness: 0.9,
+        roughness: 0.2,
+        clearcoat: 0.8,
+        clearcoatRoughness: 0.2,
+        normalScale: new THREE.Vector2(0.5, 0.5)
+      }),
+      atmosphere: new THREE.MeshPhongMaterial({
+        color: "#34d399",
+        transparent: true,
+        opacity: 0.3,
+        wireframe: true,
+        emissive: "#34d399",
+        emissiveIntensity: 0.2
+      }),
+      clouds: new THREE.MeshPhongMaterial({
+        color: "#fff",
+        transparent: true,
+        opacity: 0.15,
+        wireframe: true,
+        emissive: "#fff",
+        emissiveIntensity: 0.1
+      }),
+      particles: new THREE.PointsMaterial({
+        size: 0.02,
+        color: "#34d399",
+        transparent: true,
+        opacity: 0.8,
+        sizeAttenuation: true,
+        blending: THREE.AdditiveBlending
+      }),
+      satellite: new THREE.MeshPhongMaterial({
+        color: "#34d399",
+        emissive: "#34d399",
+        emissiveIntensity: 0.5
+      })
+    };
+  }, []);
+
+  // Optimize energy pulses by pre-computing geometries
+  const energyPulses = useMemo(() => {
+    return [...Array(3)].map((_, i) => ({ // Reduced from 5 to 3 pulses
+      geometry: new THREE.SphereGeometry(1.5 + i * 0.2, 12, 12), // Reduced segments
+      material: new THREE.PointsMaterial({
+        size: 0.02,
+        color: "#34d399",
+        transparent: true,
+        opacity: 0.3 - i * 0.05,
+        sizeAttenuation: true,
+        blending: THREE.AdditiveBlending
+      })
+    }));
+  }, []);
 
   useFrame(({ clock }) => {
     const elapsedTime = clock.getElapsedTime();
@@ -35,98 +106,42 @@ export default function Earth3D() {
 
   return (
     <group>
-      {/* Enhanced stars background */}
+      {/* Optimized stars with reduced count */}
       <Stars 
         radius={100}
         depth={50}
-        count={7000}
+        count={5000} // Reduced from 7000
         factor={4}
         saturation={0}
         fade
         speed={1}
       />
 
-      {/* Earth core with enhanced material */}
-      <Sphere ref={earthRef} args={[1, 64, 64]}>
-        <meshPhysicalMaterial
-          color="#10b981"
-          emissive="#059669"
-          emissiveIntensity={0.6}
-          metalness={0.9}
-          roughness={0.2}
-          clearcoat={0.8}
-          clearcoatRoughness={0.2}
-          normalScale={new THREE.Vector2(0.5, 0.5)}
-        />
-      </Sphere>
+      {/* Earth core with memoized geometry and material */}
+      <mesh ref={earthRef} geometry={geometries.sphere} material={materials.earth} />
 
-      {/* Enhanced atmosphere layer with pulsing effect */}
-      <Sphere ref={atmosphereRef} args={[1.2, 32, 32]}>
-        <meshPhongMaterial
-          color="#34d399"
-          transparent
-          opacity={0.3}
-          wireframe
-          emissive="#34d399"
-          emissiveIntensity={0.2}
-        />
-      </Sphere>
+      {/* Atmosphere with memoized geometry and material */}
+      <mesh ref={atmosphereRef} geometry={geometries.atmosphere} material={materials.atmosphere} />
 
-      {/* Enhanced cloud layer with dynamic patterns */}
-      <Sphere ref={cloudsRef} args={[1.1, 32, 32]}>
-        <meshPhongMaterial
-          color="#fff"
-          transparent
-          opacity={0.15}
-          wireframe
-          emissive="#fff"
-          emissiveIntensity={0.1}
-        />
-      </Sphere>
+      {/* Clouds with memoized geometry and material */}
+      <mesh ref={cloudsRef} geometry={geometries.clouds} material={materials.clouds} />
 
-      {/* Data visualization ring with enhanced effects */}
-      <points ref={particlesRef}>
-        <torusGeometry args={[1.8, 0.1, 16, 100]} />
-        <pointsMaterial
-          size={0.02}
-          color="#34d399"
-          transparent
-          opacity={0.8}
-          sizeAttenuation
-          blending={THREE.AdditiveBlending}
-        />
-      </points>
+      {/* Data visualization ring with memoized geometry and material */}
+      <points ref={particlesRef} geometry={geometries.torus} material={materials.particles} />
 
-      {/* Enhanced satellite with longer trail */}
+      {/* Satellite with trail */}
       <Trail
         width={0.05}
         length={8}
         color="#34d399"
         attenuation={(t) => t * t}
       >
-        <mesh ref={satelliteRef} position={[2, 0, 0]}>
-          <boxGeometry args={[0.1, 0.1, 0.2]} />
-          <meshPhongMaterial
-            color="#34d399"
-            emissive="#34d399"
-            emissiveIntensity={0.5}
-          />
-        </mesh>
+        <mesh ref={satelliteRef} position={[2, 0, 0]} geometry={geometries.satellite} material={materials.satellite} />
       </Trail>
 
-      {/* Enhanced energy pulses */}
-      {[...Array(5)].map((_, i) => (
-        <points key={i}>
-          <sphereGeometry args={[1.5 + i * 0.2, 16, 16]} />
-          <pointsMaterial
-            size={0.02}
-            color="#34d399"
-            transparent
-            opacity={0.3 - i * 0.05}
-            sizeAttenuation
-            blending={THREE.AdditiveBlending}
-          />
-        </points>
+      {/* Optimized energy pulses */}
+      {energyPulses.map((pulse, i) => (
+        <points key={i} geometry={pulse.geometry} material={pulse.material} />
       ))}
     </group>
   );
