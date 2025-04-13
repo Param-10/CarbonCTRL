@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { useAuthStore } from './store/authStore';
 import { useCompanyStore } from './store/companyStore';
 import Layout from './components/Layout';
+import { TestEnv } from './testEnv';
 
 // Pages
 import LandingPage from './pages/LandingPage';
@@ -51,6 +52,7 @@ function App() {
 
   return (
     <Router>
+      <TestEnv />
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/auth" element={<AuthPage />} />
