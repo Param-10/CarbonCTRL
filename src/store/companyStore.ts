@@ -21,22 +21,15 @@ export interface CompanyProfile {
 interface CompanyState {
   profile: CompanyProfile | null;
   loading: boolean;
-  error: string | null;
-  profileComplete: boolean;
+  error: PostgrestError | null;
   fetchProfile: () => Promise<void>;
   updateProfile: (profile: CompanyProfile) => Promise<void>;
-  setProfile: (profile: CompanyProfile) => void;
-  resetProfile: () => void;
-  checkProfileComplete: () => boolean;
 }
-
-// Removed defaultProfile object
 
 export const useCompanyStore = create<CompanyState>((set, get) => ({
   profile: null,
   loading: false,
   error: null,
-  profileComplete: false,
 
   fetchProfile: async () => {
     const { profile } = get();
@@ -50,144 +43,114 @@ export const useCompanyStore = create<CompanyState>((set, get) => ({
       const user = useAuthStore.getState().user;
       
       if (!user) {
-        throw new Error('User not authenticated');
+        console.error('Cannot fetch profile: No user logged in');
+        return;
       }
       
       console.log('Fetching company profile for user:', user.id);
       
-      const { data, error } = await supabase
-        .from('company_profiles')
-        .select('*')
-        .eq('user_id', user.id)
-        .single();
-      
-      if (error) {
-        if ((error as PostgrestError).code === 'PGRST116') {
-          // No profile exists yet - don't set a default profile
-          set({ profile: null, loading: false, profileComplete: false });
+      try {
+        const { data, error } = await supabase
+          .from('company_profiles')
+          .select('*')
+          .eq('user_id', user.id)
+          .single();
+        
+        if (error) {
+          if (error.code === 'PGRST116') {
+            console.log('No company profile found for user');
+            // No profile found, but not an error
+            set({ profile: null, loading: false, error: null });
+            return;
+          }
+          
+          console.error('Error fetching company profile:', error);
+          set({ error, loading: false });
           return;
         }
-        throw error;
+        
+        console.log('Successfully loaded company profile:', data);
+        set({ profile: data, loading: false, error: null });
+      } catch (fetchError) {
+        console.error('Network or API error in fetchProfile:', fetchError);
+        set({ loading: false, error: null });
       }
       
-      console.log('Company profile loaded:', data);
-      set({ 
-        profile: data, 
-        loading: false,
-        profileComplete: get().checkProfileComplete()
-      });
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch company profile';
-      console.error('Error fetching company profile:', err);
-      set({ 
-        profile: null, 
-        loading: false, 
-        error: errorMessage,
-        profileComplete: false
-      });
+      console.log('Successfully loaded company profile:', data);
+      set({ profile: data, loading: false, error: null });
+    } catch (error) {
+      console.error('Unexpected error in fetchProfile:', error);
+      set({ loading: false });
     }
   },
 
-  updateProfile: async (profile) => {
+  updateProfile: async (profileData: CompanyProfile) => {
     set({ loading: true, error: null });
     
     try {
+      // Get current user from auth store
       const user = useAuthStore.getState().user;
       
       if (!user) {
-        throw new Error('User not authenticated');
+        console.error('Cannot update profile: No user logged in');
+        return;
       }
       
-      // Ensure user_id is set
-      profile.user_id = user.id;
-      profile.updated_at = new Date().toISOString();
-      
-      console.log('Updating company profile:', profile);
+      console.log('Updating company profile for user:', user.id);
       
       // Check if profile exists
-      const { data: existingProfile, error: checkError } = await supabase
+      const { data: existingProfile, error: fetchError } = await supabase
         .from('company_profiles')
         .select('id')
         .eq('user_id', user.id)
         .single();
       
-      if (checkError && checkError.code !== 'PGRST116') {
-        throw checkError;
+      if (fetchError && fetchError.code !== 'PGRST116') {
+        console.error('Error checking for existing profile:', fetchError);
+        set({ error: fetchError, loading: false });
+        return;
       }
       
       let result;
       
       if (existingProfile) {
         // Update existing profile
+        console.log('Updating existing profile with ID:', existingProfile.id);
         result = await supabase
           .from('company_profiles')
           .update({
-            ...profile,
-            updated_at: new Date().toISOString(),
+            ...profileData,
+            updated_at: new Date().toISOString()
           })
           .eq('id', existingProfile.id)
           .select()
           .single();
       } else {
-        // Insert new profile
+        // Create new profile
+        console.log('Creating new company profile');
         result = await supabase
           .from('company_profiles')
           .insert({
-            ...profile,
+            ...profileData,
             user_id: user.id,
             created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
           })
           .select()
           .single();
       }
       
-      if (result.error) throw result.error;
+      if (result.error) {
+        console.error('Error saving company profile:', result.error);
+        set({ error: result.error, loading: false });
+        return;
+      }
       
-      console.log('Company profile updated:', result.data);
-      set({ 
-        profile: result.data, 
-        loading: false,
-        profileComplete: get().checkProfileComplete()
-      });
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to update company profile';
-      console.error('Error updating company profile:', err);
-      set({ 
-        loading: false, 
-        error: errorMessage
-      });
+      console.log('Successfully saved company profile:', result.data);
+      set({ profile: result.data, loading: false, error: null });
+    } catch (error) {
+      console.error('Unexpected error in updateProfile:', error);
+      set({ loading: false });
     }
-  },
-
-  setProfile: (profile) => {
-    set({ 
-      profile,
-      profileComplete: !!profile && get().checkProfileComplete()
-    });
-  },
-  
-  resetProfile: () => {
-    set({ profile: null, error: null, profileComplete: false });
-  },
-
-  checkProfileComplete: () => {
-    const { profile } = get();
-    if (!profile) return false;
-    
-    // Check if all required fields are filled
-    const requiredFields: (keyof CompanyProfile)[] = [
-      'name', 'employees', 'location', 'industry', 'description'
-    ];
-    
-    return requiredFields.every(field => 
-      !!profile[field] && profile[field].trim() !== ''
-    );
   }
 }));
-
-// Listen for auth changes to reset profile when user logs out
-supabase.auth.onAuthStateChange((event) => {
-  if (event === 'SIGNED_OUT') {
-    useCompanyStore.getState().resetProfile();
-  }
-});

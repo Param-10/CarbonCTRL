@@ -39,11 +39,6 @@
   100% { border-radius: 60% 40% 30% 70%/60% 30% 70% 40%; }
 }
 
-@keyframes matrix-rain {
-  0% { transform: translateY(-100%); opacity: 0; }
-  50% { opacity: 1; }
-  100% { transform: translateY(100%); opacity: 0; }
-}
 
 .animate-spin-slow {
   animation: spin-slow 20s linear infinite;
@@ -86,6 +81,8 @@
     0 8px 32px rgba(0, 0, 0, 0.3),
     inset 0 0 32px rgba(16, 185, 129, 0.1);
   transition: all 0.3s ease;
+  /* Add will-change to improve performance */
+  will-change: transform, opacity;
 }
 
 .feature-card:hover {
@@ -148,7 +145,8 @@
   color: transparent;
   background-size: 200% auto;
   animation: gradient 4s ease infinite;
-  filter: drop-shadow(0 0 12px rgba(16, 185, 129, 0.5));
+  filter: drop-shadow(0 0 6px rgba(16, 185, 129, 0.3)); /* Reduced shadow intensity */
+  will-change: background-position; /* Add will-change for better performance */
 }
 
 .nav-blur {
@@ -162,10 +160,6 @@
   background: linear-gradient(45deg, #059669, #10B981);
   transform-origin: 50% 50%;
   box-shadow: 0 0 60px rgba(16, 185, 129, 0.3);
-}
-
-.parallax-bg {
-  transform: translateZ(-10px) scale(2);
 }
 
 .hover-card {
@@ -200,22 +194,4 @@
 
 .nav-link:hover::after {
   width: 100%;
-}
-
-.matrix-bg {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0.05;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    0deg,
-    rgba(16, 185, 129, 0.1) 0%,
-    rgba(16, 185, 129, 0.2) 50%,
-    rgba(16, 185, 129, 0.1) 100%
-  );
-  background-size: 100% 32px;
-  animation: matrix-rain 20s linear infinite;
 }

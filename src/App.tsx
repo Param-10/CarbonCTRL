@@ -1,88 +1,81 @@
-import React, { useEffect, Suspense, lazy } from 'react';
+import { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './store/authStore';
-import { useCompanyStore } from './store/companyStore';
 import { useCarbonStore } from './store/carbonStore';
+import { useCompanyStore } from './store/companyStore';
 import Layout from './components/Layout';
-
-// Implement lazy loading for page components
-const LandingPage = lazy(() => import('./pages/LandingPage'));
-const DashboardPage = lazy(() => import('./pages/DashboardPage'));
-const AuthPage = lazy(() => import('./pages/AuthPage'));
-const SettingsPage = lazy(() => import('./pages/SettingsPage'));
-const RecommendationsPage = lazy(() => import('./pages/RecommendationsPage'));
-const CompanyProfilePage = lazy(() => import('./pages/CompanyProfilePage'));
-
-// Loading fallback component
-const LoadingFallback = () => (
-  <div className="flex items-center justify-center h-screen w-full bg-gradient-to-b from-gray-900 to-black">
-    <div className="text-center">
-      <div className="w-16 h-16 border-4 border-t-emerald-500 border-emerald-200 rounded-full animate-spin mx-auto mb-4"></div>
-      <p className="text-emerald-500 text-lg font-semibold">Loading CarbonCTRL...</p>
-    </div>
-  </div>
-);
-
-// Protected Route Component
-const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
-  const { user, loading } = useAuthStore();
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-b from-gray-800 via-emerald-900 to-gray-800 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-emerald-400 border-t-transparent rounded-full animate-spin mb-4"></div>
-          <p className="font-mono text-emerald-100">Loading...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return <Navigate to="/auth" replace />;
-  }
-
-  return children;
-};
+import LandingPage from './pages/LandingPage';
+import AuthPage from './pages/AuthPage';
+import DashboardPage from './pages/DashboardPage';
+import SettingsPage from './pages/SettingsPage';
+import CompanyProfilePage from './pages/CompanyProfilePage';
+import RecommendationsPage from './pages/RecommendationsPage';
+import OffsetProjectsPage from './pages/OffsetProjectsPage';
 
 function App() {
-  const { initializeAuth, user } = useAuthStore();
-  const { fetchProfile } = useCompanyStore();
+  const { user, initializeAuth } = useAuthStore();
   const { loadSavedData } = useCarbonStore();
+  const { fetchProfile } = useCompanyStore();
 
   useEffect(() => {
-    initializeAuth();
+    // Initialize auth on app startup
+    const init = async () => {
+      console.log('Initializing app...');
+      try {
+        await initializeAuth();
+      } catch (error) {
+        console.error('Error initializing auth:', error);
+      }
+    };
+    
+    init();
   }, [initializeAuth]);
 
-  // When a user logs in, fetch their company profile and carbon data
+  // Load user data when user is available
   useEffect(() => {
     if (user) {
-      fetchProfile();
-      loadSavedData(user.id);
+      console.log('User authenticated, loading data for:', user.id);
+      
+      // Load carbon data
+      loadSavedData(user.id).catch(err => {
+        console.error('Error loading carbon data:', err);
+      });
+      
+      // Load company profile
+      fetchProfile().catch(err => {
+        console.error('Error loading company profile:', err);
+      });
     }
-  }, [user, fetchProfile, loadSavedData]);
+  }, [user, loadSavedData, fetchProfile]);
 
   return (
     <Router>
-      <Suspense fallback={<LoadingFallback />}>
-        <Routes>
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/auth" element={<AuthPage />} />
-          
-          <Route
-            element={
-              <ProtectedRoute>
-                <Layout />
-              </ProtectedRoute>
-            }
-          >
-            <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/recommendations" element={<RecommendationsPage />} />
-            <Route path="/company-profile" element={<CompanyProfilePage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-          </Route>
-        </Routes>
-      </Suspense>
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/auth" element={<AuthPage />} />
+        <Route element={<Layout />}>
+          <Route 
+            path="/dashboard" 
+            element={user ? <DashboardPage /> : <Navigate to="/auth" />} 
+          />
+          <Route 
+            path="/settings" 
+            element={user ? <SettingsPage /> : <Navigate to="/auth" />} 
+          />
+          <Route 
+            path="/company-profile" 
+            element={user ? <CompanyProfilePage /> : <Navigate to="/auth" />} 
+          />
+          <Route 
+            path="/recommendations" 
+            element={user ? <RecommendationsPage /> : <Navigate to="/auth" />} 
+          />
+          <Route 
+            path="/offset-projects" 
+            element={user ? <OffsetProjectsPage /> : <Navigate to="/auth" />} 
+          />
+        </Route>
+      </Routes>
     </Router>
   );
 }

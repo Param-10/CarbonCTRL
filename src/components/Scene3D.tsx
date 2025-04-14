@@ -1,12 +1,13 @@
 import React from 'react';
 import { Canvas, extend } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Effects, Float, MeshDistortMaterial, GradientTexture, Preload } from '@react-three/drei';
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass';
+// Remove the direct import from three
 import Earth3D from './Earth3D';
 import DataViz from './DataViz';
 import * as THREE from 'three';
 
 // Properly extend UnrealBloomPass using react-three-fiber's extend
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass';
 extend({ UnrealBloomPass });
 
 export default function Scene3D() {
@@ -29,7 +30,7 @@ export default function Scene3D() {
         
         {/* Enhanced bloom effect */}
         <Effects>
-          <unrealBloomPass
+          <UnrealBloomPass
             threshold={0.1}
             strength={1.2}
             radius={0.8}

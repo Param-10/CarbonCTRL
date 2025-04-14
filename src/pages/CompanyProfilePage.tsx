@@ -56,7 +56,7 @@ const CompanyProfilePage = () => {
         <div className="text-center max-w-lg">
           <AlertTriangle className="w-16 h-16 text-red-400 mx-auto mb-4" />
           <h2 className="font-space text-xl font-bold text-white mb-2">Error Loading Profile</h2>
-          <p className="font-mono text-red-400 mb-6">{error}</p>
+          <p className="font-mono text-red-400 mb-6">{error.message || String(error)}</p>
           <button 
             onClick={() => fetchProfile()} 
             className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-mono text-sm py-3 px-6 rounded-lg transition-colors"

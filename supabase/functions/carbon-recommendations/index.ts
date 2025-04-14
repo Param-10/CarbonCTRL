@@ -1,9 +1,10 @@
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+import { serve } from 'https://deno.land/std@0.208.0/http/server.ts';
 import { GoogleGenerativeAI } from 'npm:@google/generative-ai@0.2.1';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
 };
 
 interface CompanyData {
@@ -34,13 +35,32 @@ serve(async (req) => {
   }
 
   try {
-    const apiKey = Deno.env.get('GEMINI_API_KEY');
+    // Fix: Use Deno.env.get with proper error handling for Supabase Edge Functions
+    let apiKey;
+    try {
+      apiKey = Deno.env.get('GEMINI_API_KEY');
+    } catch (envError) {
+      console.error('Error accessing environment variables:', envError);
+      return new Response(
+        JSON.stringify({
+          error: 'Configuration Error',
+          details: 'Cannot access environment variables. Make sure they are properly set in Supabase.'
+        }),
+        {
+          status: 500,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+    }
     
     if (!apiKey) {
       return new Response(
         JSON.stringify({
           error: 'Configuration Error',
-          details: 'Gemini API key not configured. Please check environment variables.'
+          details: 'Gemini API key not configured. Please check environment variables in Supabase dashboard.'
         }),
         {
           status: 500,

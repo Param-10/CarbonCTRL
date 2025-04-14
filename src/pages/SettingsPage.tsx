@@ -13,7 +13,7 @@ interface UserPreferences {
 
 const SettingsPage = () => {
   const { user, signOut } = useAuthStore();
-  const { profile, updateProfile } = useCompanyStore();
+const {} = useCompanyStore();
   
   const [profileData, setProfileData] = useState({
     firstName: '',

@@ -83,20 +83,6 @@ Discover real-world offset opportunities that match your company's profile:
 
 ## 🔧 Advanced Usage
 
-### Local Storage Caching
-
-CarbonCTRL includes an intelligent caching system for offset projects, which:
-•⁠  ⁠Stores data locally for 24 hours
-•⁠  ⁠Significantly improves page load performance
-•⁠  ⁠Reduces API usage and costs
-•⁠  ⁠Provides offline capabilities
-
-To clear the cache:
-⁠ javascript
-// In the browser console
-window.localStorage.removeItem('carbon-offset-storage')
- ⁠
-
 ### Custom Deployment
 
 To deploy CarbonCTRL to your own infrastructure:
@@ -126,6 +112,10 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## 🔄 Updates
+
+•⁠  ⁠Browser cache usage has been removed; all data is now stored exclusively in Supabase.
 
 ## 🙏 Acknowledgements
 

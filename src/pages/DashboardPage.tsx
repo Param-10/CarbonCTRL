@@ -154,7 +154,7 @@ const DashboardPage = () => {
     removeActivity,
     calculateScore,
     resetScore,
-    saveResults
+    loadSavedData
   } = useCarbonStore();
 
   useEffect(() => {
@@ -165,6 +165,19 @@ const DashboardPage = () => {
     
     return () => clearTimeout(timer);
   }, []);
+
+  // Add a new useEffect to load data from Supabase when component mounts
+  useEffect(() => {
+    // Load saved data when component mounts
+    if (user) {
+      console.log('Loading saved carbon data for user:', user.id);
+      loadSavedData(user.id).catch(err => {
+        console.error('Error loading saved data:', err);
+      });
+    } else {
+      console.warn('No user found, cannot load saved data');
+    }
+  }, [user, loadSavedData]);
 
   interface ActivityUnits {
     [sector: string]: {
@@ -209,27 +222,42 @@ const DashboardPage = () => {
     return 'units';
   };
 
-  const handleAddActivity = () => {
+  const handleAddActivity = async () => {
+    if (!user) {
+      setError('You must be logged in to add activities');
+      return;
+    }
+
     if (!selectedSector || !selectedSubsector || !activityAmount) {
       setError('Please fill in all fields');
       return;
     }
 
-    addActivity({
-      sector: selectedSector,
-      subsector: selectedSubsector,
-      activity_amount: parseFloat(activityAmount),
-      activity_unit: getUnitDescription(selectedSector, selectedSubsector)
-    });
+    try {
+      await addActivity({
+        sector: selectedSector,
+        subsector: selectedSubsector,
+        activity_amount: parseFloat(activityAmount),
+        activity_unit: getUnitDescription(selectedSector, selectedSubsector)
+      }, user.id);
 
-    setSelectedSector('');
-    setSelectedSubsector('');
-    setActivityAmount('');
-    setError('');
-    setIsModalOpen(false);
+      setSelectedSector('');
+      setSelectedSubsector('');
+      setActivityAmount('');
+      setError('');
+      setIsModalOpen(false);
+    } catch (err) {
+      console.error('Error adding activity:', err);
+      setError('Failed to add activity');
+    }
   };
 
   const handleSubmit = async () => {
+    if (!user) {
+      setError('You must be logged in to calculate your score');
+      return;
+    }
+
     if (activities.length === 0) {
       setError('Please add at least one activity');
       return;
@@ -238,16 +266,28 @@ const DashboardPage = () => {
     setError('');
     
     try {
-      await calculateScore();
-      
-      // After calculation is successful, save the results to the database
-      if (user && user.id) {
-        await saveResults(user.id);
-      } else {
-        console.error('Cannot save results: No user is logged in');
-      }
+      console.log('Calculating carbon score for user:', user.id);
+      await calculateScore(user.id);
+      // No need to call saveResults as data is saved directly in calculateScore
     } catch (err: any) {
+      console.error('Error calculating score:', err);
       setError(err.message || 'Failed to calculate carbon score');
+    }
+  };
+
+  // Add a new function to handle reset
+  const handleResetScore = async () => {
+    if (!user) {
+      setError('You must be logged in to reset your score');
+      return;
+    }
+
+    try {
+      console.log('Resetting carbon data for user:', user.id);
+      await resetScore(user.id);
+    } catch (err) {
+      console.error('Error resetting score:', err);
+      setError('Failed to reset carbon score');
     }
   };
 
@@ -358,7 +398,7 @@ const DashboardPage = () => {
                           </p>
                         </div>
                         <button
-                          onClick={() => removeActivity(activity.id)}
+                          onClick={() => removeActivity(activity.id, user.id)}
                           className="p-2 text-red-400 hover:text-red-300 transition-colors"
                         >
                           <X className="w-5 h-5" />
@@ -368,7 +408,7 @@ const DashboardPage = () => {
 
                     <div className="flex justify-end gap-4 mt-6">
                       <button
-                        onClick={resetScore}
+                        onClick={handleResetScore}
                         className="px-4 py-2 font-mono text-sm text-emerald-100/70 hover:text-white transition-colors"
                       >
                         Reset

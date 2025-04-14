@@ -12,8 +12,7 @@ export default defineConfig({
     visualizer({
       open: false,
       gzipSize: true,
-      brotliSize: true,
-      filename: 'stats.html'
+      brotliSize: true
     }) // Bundle size analyzer with more details
   ],
   resolve: {
@@ -29,11 +28,11 @@ export default defineConfig({
     rollupOptions: {
       output: {}
     },
-    sourcemap: process.env.NODE_ENV !== 'production',
-    minify: false,
+    sourcemap: false,
+    minify: true,
     reportCompressedSize: true,
     assetsInlineLimit: 4096,
-    target: 'esnext',
+    target: 'es2020',
     outDir: 'dist',
     emptyOutDir: true
   },
@@ -47,7 +46,7 @@ export default defineConfig({
       '@react-three/drei'
     ],
     esbuildOptions: {
-      target: 'esnext'
+      target: 'es2020'
     }
   },
   server: {
