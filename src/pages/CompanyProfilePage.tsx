@@ -112,19 +112,22 @@ const CompanyProfilePage = () => {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         {/* Company Info Card */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="feature-card lg:col-span-2 p-10 border border-emerald-500/20 shadow-lg rounded-xl"
+          className="feature-card lg:col-span-3 p-8 border border-emerald-500/20 shadow-xl rounded-2xl bg-gradient-to-br from-gray-800/50 to-gray-900/50 backdrop-blur-sm"
         >
-          <div className="flex items-center justify-between mb-10">
-            <div className="flex items-center gap-5">
-              <div className="bg-emerald-500/20 p-5 rounded-xl">
-                <Building2 className="w-7 h-7 text-emerald-400" />
+          <div className="flex items-center justify-between mb-8">
+            <div className="flex items-center gap-4">
+              <div className="bg-emerald-500/20 p-4 rounded-xl border border-emerald-500/30">
+                <Building2 className="w-6 h-6 text-emerald-400" />
               </div>
-              <h2 className="font-space text-2xl font-semibold text-white">Company Information</h2>
+              <div>
+                <h2 className="font-space text-xl font-semibold text-white">Company Information</h2>
+                <p className="font-mono text-sm text-emerald-100/60 mt-1">Fill out your organization details</p>
+              </div>
             </div>
             <button
               onClick={() => isEditing ? handleSave() : setIsEditing(true)}
@@ -148,7 +151,7 @@ const CompanyProfilePage = () => {
             </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="space-y-8">
               <div>
                 <label className="block font-mono text-sm text-emerald-100/70 mb-3">Company Name</label>
@@ -157,10 +160,13 @@ const CompanyProfilePage = () => {
                     type="text"
                     value={companyData.name}
                     onChange={(e) => setCompanyData({ ...companyData, name: e.target.value })}
-                    className="w-full bg-gray-800/50 border-2 border-emerald-500/30 rounded-xl py-4 px-6 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono shadow-inner"
+                    placeholder="Enter your company name"
+                    className="w-full bg-gray-800/40 border-2 border-emerald-500/20 rounded-xl py-3 px-5 text-white placeholder-gray-400 focus:outline-none focus:border-emerald-500/60 focus:ring-2 focus:ring-emerald-500/20 font-mono shadow-inner transition-all duration-200"
                   />
                 ) : (
-                  <p className="font-mono text-white bg-gray-800/30 p-4 px-6 rounded-xl border border-gray-700/30">{companyData.name}</p>
+                  <div className="w-full bg-gray-800/20 border border-gray-700/30 rounded-xl py-3 px-5 text-white font-mono min-h-[48px] flex items-center">
+                    {companyData.name || 'Not specified'}
+                  </div>
                 )}
               </div>
 
@@ -333,7 +339,7 @@ const CompanyProfilePage = () => {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
-            className="feature-card p-10 border border-emerald-500/20 shadow-lg rounded-xl"
+            className="feature-card p-6 border border-emerald-500/20 shadow-xl rounded-2xl bg-gradient-to-br from-emerald-900/20 to-blue-900/20 backdrop-blur-sm"
           >
             <div className="flex items-center gap-5 mb-8">
               <div className="bg-emerald-500/20 p-5 rounded-xl">
