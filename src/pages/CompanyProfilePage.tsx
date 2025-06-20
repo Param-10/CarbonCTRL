@@ -74,9 +74,42 @@ const CompanyProfilePage = () => {
 
   return (
     <div className="space-y-10">
+      {/* Welcome Message for New Users */}
+      {!profile && (
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-gradient-to-r from-emerald-500/20 to-blue-500/20 border border-emerald-500/30 rounded-xl p-6"
+        >
+          <div className="flex items-start gap-4">
+            <div className="bg-emerald-500/20 p-3 rounded-lg flex-shrink-0">
+              <Building2 className="w-6 h-6 text-emerald-400" />
+            </div>
+            <div>
+              <h2 className="font-space text-xl font-semibold text-white mb-2">
+                Welcome to CarbonCTRL! 🌱
+              </h2>
+              <p className="font-mono text-emerald-100/90 leading-relaxed">
+                Before we can help you track and reduce your carbon footprint, we need to know a bit about your organization. 
+                Please fill out your company details below to get started on your sustainability journey!
+              </p>
+              <div className="mt-4 flex items-center gap-2 text-sm font-mono text-emerald-300">
+                <span className="w-2 h-2 bg-emerald-400 rounded-full"></span>
+                <span>This helps us provide personalized carbon insights for your industry and size</span>
+              </div>
+            </div>
+          </div>
+        </motion.div>
+      )}
+
       <div>
         <h1 className="font-space text-4xl font-bold text-white mb-3">Company Profile</h1>
-        <p className="font-mono text-emerald-100/80">Manage your organization's details and view performance metrics</p>
+        <p className="font-mono text-emerald-100/80">
+          {!profile 
+            ? "Set up your organization's details to begin tracking your carbon impact"
+            : "Manage your organization's details and view performance metrics"
+          }
+        </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -104,7 +137,7 @@ const CompanyProfilePage = () => {
               {isEditing ? (
                 <>
                   <Save className="w-4 h-4" />
-                  Save Changes
+                  {!profile ? 'Complete Setup & Continue' : 'Save Changes'}
                 </>
               ) : (
                 <>
@@ -271,6 +304,26 @@ const CompanyProfilePage = () => {
                 <p className="font-mono text-white bg-gray-800/30 p-4 px-6 rounded-xl border border-gray-700/30">{companyData.industry}</p>
               )}
             </div>
+            
+            {/* Motivational message for new users */}
+            {!profile && isEditing && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.3 }}
+                className="mt-8 p-6 bg-emerald-500/10 border border-emerald-500/20 rounded-xl"
+              >
+                <div className="flex items-center gap-3 mb-3">
+                  <span className="text-2xl">🚀</span>
+                  <h3 className="font-space text-lg font-semibold text-white">Almost there!</h3>
+                </div>
+                <p className="font-mono text-sm text-emerald-300 leading-relaxed">
+                  Complete your company setup to unlock carbon tracking, AI-powered insights, and personalized recommendations. 
+                  <br />
+                  <span className="text-emerald-400 font-semibold">Let's help you reduce your carbon footprint together! 🌱</span>
+                </p>
+              </motion.div>
+            )}
           </div>
         </motion.div>
 
