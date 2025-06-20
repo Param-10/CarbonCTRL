@@ -73,7 +73,8 @@ const CompanyProfilePage = () => {
   if (!companyData) return null;
 
   return (
-    <div className="space-y-10">
+    <div className="fixed inset-0 md:left-64 overflow-y-auto bg-gradient-to-b from-gray-800 via-emerald-900 to-gray-800">
+      <div className="px-8 py-8 space-y-10">
       {/* Welcome Message for New Users */}
       {!profile && (
         <motion.div
@@ -365,12 +366,13 @@ const CompanyProfilePage = () => {
                   <span className="font-space text-3xl font-bold text-white">
                     {carbonScore.carbon_rating}
                   </span>
-                  <span className="font-mono text-emerald-400">{carbonScore.rating_description}</span>
+                  <span className="font-mono text-emerald-400">Rating</span>
                 </div>
               </div>
             </div>
           </motion.div>
         )}
+      </div>
       </div>
     </div>
   );

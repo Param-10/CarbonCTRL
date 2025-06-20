@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import {
   BarChart3,
-  TreePine,
   Plus,
   X,
   AlertTriangle,
@@ -12,11 +11,6 @@ import {
   ArrowRight
 } from 'lucide-react';
 import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
   Tooltip,
   ResponsiveContainer,
   PieChart as RechartsPieChart,
@@ -27,62 +21,9 @@ import { useCarbonStore } from '../store/carbonStore';
 import { useCompanyStore } from '../store/companyStore';
 import { useAuthStore } from '../store/authStore';
 
-const sectors = {
-  agriculture: ['cropland-fires', 'synthetic-fertilizer-application', 'manure-management', 'rice-cultivation', 'enteric-fermentation', 'crop-residues'],
-  power: ['electricity-generation', 'heat-plants', 'solar-generation', 'wind-generation', 'hydroelectric'],
-  transportation: ['road', 'aviation', 'shipping', 'rail', 'public-transit'],
-  buildings: ['residential', 'commercial', 'lighting', 'heating', 'cooling'],
-  manufacturing: ['cement', 'steel', 'chemicals', 'paper', 'aluminum', 'plastics', 'electronics'],
-  waste: ['landfill', 'wastewater', 'incineration', 'composting', 'recycling']
-};
+// Sectors will be loaded dynamically from backend
 
-const activityUnits = {
-  agriculture: {
-    'cropland-fires': 'hectares of cropland burned',
-    'synthetic-fertilizer-application': 'kg of fertilizer applied',
-    'manure-management': 'number of animals',
-    'rice-cultivation': 'hectares of rice cultivation',
-    'enteric-fermentation': 'number of ruminant animals',
-    'crop-residues': 'kg of crop residues'
-  },
-  power: {
-    'electricity-generation': 'kWh of electricity generated',
-    'heat-plants': 'kWh of heat generated',
-    'solar-generation': 'kWh of solar electricity generated',
-    'wind-generation': 'kWh of wind electricity generated',
-    'hydroelectric': 'kWh of hydroelectric power generated'
-  },
-  transportation: {
-    'road': 'km traveled by vehicles',
-    'aviation': 'km traveled by aircraft',
-    'shipping': 'ton-km of goods shipped',
-    'rail': 'km traveled by trains',
-    'public-transit': 'passenger-km traveled'
-  },
-  buildings: {
-    'residential': 'square feet of residential space',
-    'commercial': 'square feet of commercial space',
-    'lighting': 'kWh used for lighting',
-    'heating': 'kWh used for heating',
-    'cooling': 'kWh used for cooling'
-  },
-  manufacturing: {
-    'cement': 'tons of cement produced',
-    'steel': 'tons of steel produced',
-    'chemicals': 'tons of chemicals produced',
-    'paper': 'tons of paper produced',
-    'aluminum': 'tons of aluminum produced',
-    'plastics': 'tons of plastics produced',
-    'electronics': 'tons of electronics produced'
-  },
-  waste: {
-    'landfill': 'tons of waste sent to landfill',
-    'wastewater': 'cubic meters of wastewater treated',
-    'incineration': 'tons of waste incinerated',
-    'composting': 'tons of waste composted',
-    'recycling': 'tons of waste recycled'
-  }
-};
+// Sectors and units are now loaded dynamically from emission factors
 
 const COLORS = ['#34d399', '#059669', '#10b981', '#6ee7b7', '#a7f3d0'];
 
@@ -142,6 +83,9 @@ const DashboardPage = () => {
   const [activityAmount, setActivityAmount] = useState('');
   const [error, setError] = useState('');
   const [isIntroAnimation, setIsIntroAnimation] = useState(true);
+  const [availableSectors, setAvailableSectors] = useState<Record<string, string[]>>({});
+  const [emissionFactorsData, setEmissionFactorsData] = useState<Record<string, Record<string, { factor: number; unit: string; description: string }>>>({});
+  const [loadingFactors, setLoadingFactors] = useState(true);
   const { profile } = useCompanyStore();
   const { user } = useAuthStore();
 
@@ -166,9 +110,55 @@ const DashboardPage = () => {
     return () => clearTimeout(timer);
   }, []);
 
-  // Add a new useEffect to load data from Supabase when component mounts
+  // Load emission factors on component mount
   useEffect(() => {
-    // Load saved data when component mounts
+    const loadEmissionFactors = async () => {
+      try {
+        setLoadingFactors(true);
+        const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/gemini/emission-factors`, {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('carbonctrl_token')}`,
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        if (!response.ok) {
+          throw new Error('Failed to fetch emission factors');
+        }
+        
+        const data = await response.json();
+        
+        // Convert emission factors to the format expected by the frontend
+        const sectorsData: Record<string, string[]> = {};
+        Object.keys(data.emission_factors).forEach(sector => {
+          sectorsData[sector] = Object.keys(data.emission_factors[sector]);
+        });
+        
+        setAvailableSectors(sectorsData);
+        setEmissionFactorsData(data.emission_factors);
+        
+        console.log('Loaded emission factors:', data.emission_factors);
+      } catch (error) {
+        console.error('Error loading emission factors:', error);
+        // Fallback to default sectors if loading fails
+        setAvailableSectors({
+          agriculture: ['cropland-fires', 'synthetic-fertilizer-application', 'manure-management', 'rice-cultivation', 'enteric-fermentation', 'crop-residues'],
+          power: ['electricity-generation', 'heat-plants', 'solar-generation', 'wind-generation', 'hydroelectric'],
+          transportation: ['road', 'aviation', 'shipping', 'rail', 'public-transit'],
+          buildings: ['residential', 'commercial', 'lighting', 'heating', 'cooling'],
+          manufacturing: ['cement', 'steel', 'chemicals', 'paper', 'aluminum', 'plastics', 'electronics'],
+          waste: ['landfill', 'wastewater', 'incineration', 'composting', 'recycling']
+        });
+      } finally {
+        setLoadingFactors(false);
+      }
+    };
+
+    loadEmissionFactors();
+  }, []);
+
+  // Load saved data when component mounts
+  useEffect(() => {
     if (user) {
       console.log('Loading saved carbon data for user:', user.id);
       loadSavedData(user.id).catch(err => {
@@ -186,6 +176,12 @@ const DashboardPage = () => {
   }
 
   const getUnitDescription = (sector: string, subsector: string) => {
+    // Use the unit description from loaded emission factors if available
+    if (emissionFactorsData[sector] && emissionFactorsData[sector][subsector]) {
+      return emissionFactorsData[sector][subsector].description || 'units';
+    }
+    
+    // Fallback to hardcoded descriptions
     const activityUnits: ActivityUnits = {
       agriculture: {
         'cropland-fires': 'hectares',
@@ -269,9 +265,10 @@ const DashboardPage = () => {
       console.log('Calculating carbon score for user:', user.id);
       await calculateScore(user.id);
       // No need to call saveResults as data is saved directly in calculateScore
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error calculating score:', err);
-      setError(err.message || 'Failed to calculate carbon score');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to calculate carbon score';
+      setError(errorMessage);
     }
   };
 
@@ -470,7 +467,7 @@ const DashboardPage = () => {
                           <p className="font-mono text-sm text-emerald-100/70 mb-2">Performance</p>
                           <div className="flex items-baseline">
                             <span className="font-space text-xl font-bold text-white">
-                              {carbonScore.rating_description}
+                              {carbonScore.benchmark_comparison}
                             </span>
                           </div>
                         </div>
@@ -558,11 +555,15 @@ const DashboardPage = () => {
                     className="w-full bg-gray-700/50 border border-emerald-500/30 rounded-lg py-3 px-4 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
                   >
                     <option value="">-- Select Sector --</option>
-                    {Object.keys(sectors).map((sector) => (
-                      <option key={sector} value={sector}>
-                        {sector.charAt(0).toUpperCase() + sector.slice(1)}
-                      </option>
-                    ))}
+                    {loadingFactors ? (
+                      <option disabled>Loading sectors...</option>
+                    ) : (
+                      Object.keys(availableSectors).map((sector) => (
+                        <option key={sector} value={sector}>
+                          {sector.charAt(0).toUpperCase() + sector.slice(1)}
+                        </option>
+                      ))
+                    )}
                   </select>
                 </div>
 
@@ -577,7 +578,7 @@ const DashboardPage = () => {
                       className="w-full bg-gray-700/50 border border-emerald-500/30 rounded-lg py-3 px-4 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
                     >
                       <option value="">-- Select Activity Type --</option>
-                      {sectors[selectedSector as keyof typeof sectors]?.map((subsector) => (
+                      {availableSectors[selectedSector]?.map((subsector) => (
                         <option key={subsector} value={subsector}>
                           {subsector.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')}
                         </option>
@@ -589,7 +590,7 @@ const DashboardPage = () => {
                 {selectedSubsector && (
                   <div>
                     <label className="block font-mono text-sm text-emerald-100/70 mb-2">
-                      Amount ({activityUnits[selectedSector as keyof typeof activityUnits]?.[selectedSubsector as keyof typeof activityUnits[keyof typeof activityUnits]]})
+                      Amount ({getUnitDescription(selectedSector, selectedSubsector)})
                     </label>
                     <input
                       type="number"
@@ -598,6 +599,11 @@ const DashboardPage = () => {
                       placeholder="Enter amount"
                       className="w-full bg-gray-700/50 border border-emerald-500/30 rounded-lg py-3 px-4 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
                     />
+                    {emissionFactorsData[selectedSector] && emissionFactorsData[selectedSector][selectedSubsector] && (
+                      <p className="mt-2 text-xs text-emerald-300 font-mono">
+                        ✓ Emission factor: {emissionFactorsData[selectedSector][selectedSubsector].factor} tCO₂e per unit
+                      </p>
+                    )}
                   </div>
                 )}
 
