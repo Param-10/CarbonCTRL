@@ -1,133 +1,134 @@
 # CarbonCTRL
 
-<p align="center">
-  <b>Smart carbon management for forward-thinking businesses</b>
-</p>
+Smart carbon management platform for businesses to track, reduce, and offset their carbon emissions.
 
-## 🌍 Overview
+## Overview
 
-CarbonCTRL is a comprehensive carbon management platform that helps businesses track, reduce, and offset their carbon emissions. With advanced AI-powered recommendations and real-world offset project suggestions, CarbonCTRL makes sustainable business practices accessible and actionable.
+CarbonCTRL helps businesses evaluate their carbon footprint with AI-powered recommendations and real-world offset project suggestions. The platform provides actionable insights to make sustainable business practices accessible and measurable.
 
-### Key Features
+## Features
 
-•⁠  ⁠*Carbon Assessment*: Complete evaluation of your company's carbon footprint
-•⁠  ⁠*AI-Powered Recommendations*: Smart, tailored suggestions to reduce emissions
-•⁠  ⁠*Real-World Offset Projects*: Gemini AI-researched carbon offset opportunities
-•⁠  ⁠*Interactive Dashboard*: Visualize your carbon journey with real-time metrics
-•⁠  ⁠*Company Profile Management*: Track your sustainability progress over time
+- **Carbon Assessment**: Complete evaluation of your company's carbon footprint across multiple categories
+- **AI-Powered Recommendations**: Personalized suggestions to reduce emissions using Google Gemini AI
+- **Real-World Offset Projects**: Research-backed carbon offset opportunities with implementation guidance
+- **Interactive Dashboard**: Real-time metrics and visualizations of your carbon journey
+- **Company Profile Management**: Track sustainability progress over time
 
-## 🚀 Getting Started
+## Tech Stack
+
+**Frontend:**
+- React with TypeScript
+- Vite for build tooling
+- Tailwind CSS for styling
+- Zustand for state management
+- Framer Motion for animations
+
+**Backend:**
+- Express.js with Node.js
+- MongoDB with Mongoose
+- JWT authentication
+- Google Gemini AI integration
+
+## Quick Start
 
 ### Prerequisites
 
-•⁠  ⁠Node.js (v16+)
-•⁠  ⁠npm or yarn
-•⁠  ⁠Supabase account (for authentication and data storage)
-•⁠  ⁠Google Gemini API key (for AI-powered features)
+- Node.js (v16+)
+- MongoDB database
+- Google Gemini API key
 
 ### Installation
 
-1.⁠ ⁠Clone the repository:
-   ⁠ bash
-   git clone https://github.com/yParam-10/carbonctrl.git
-   cd carbonctrl
-    ⁠
+1. Clone the repository:
+```bash
+git clone https://github.com/Param-10/CarbonCTRL.git
+cd CarbonCTRL
+```
 
-2.⁠ ⁠Install dependencies:
-   ⁠ bash
-   npm install
-    ⁠
+2. Install dependencies:
+```bash
+npm install
+```
 
-3.⁠ ⁠Set up environment variables:
-   Create a ⁠ .env ⁠ file in the root directory with the following:
-   
-⁠    VITE_SUPABASE_URL=your_supabase_url
-   VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
-   VITE_GEMINI_API_KEY=your_gemini_api_key
-    ⁠
+3. Set up environment variables:
+Create a `.env` file in the root directory:
+```env
+# MongoDB Configuration
+MONGODB_URI=your_mongodb_connection_string
 
-4.⁠ ⁠Start the development server:
-   ⁠ bash
-   npm run dev
-    ⁠
+# JWT Configuration
+JWT_SECRET=your_jwt_secret_key
 
-5.⁠ ⁠Open your browser and navigate to ⁠ http://localhost:5173 ⁠ (or the port shown in your terminal)
+# API Configuration
+NODE_ENV=development
+PORT=3001
 
-## ✨ Features In Detail
+# Gemini AI Configuration
+GEMINI_API_KEY=your_gemini_api_key
 
-### Carbon Assessment
+# Frontend URL (for CORS)
+FRONTEND_URL=http://localhost:5173
+```
 
-Track your company's carbon emissions across multiple categories:
-•⁠  ⁠Energy consumption
-•⁠  ⁠Transportation
-•⁠  ⁠Supply chain
-•⁠  ⁠Waste management
-•⁠  ⁠Employee commuting
-•⁠  ⁠Business travel
+4. Create frontend environment file `.env.local`:
+```env
+VITE_API_URL=http://localhost:3001/api
+```
 
-### AI-Powered Recommendations
+### Development
 
-Receive personalized recommendations to reduce your carbon footprint, powered by Google's Gemini AI. Recommendations include:
-•⁠  ⁠Estimated impact
-•⁠  ⁠Implementation timeline
-•⁠  ⁠Potential cost savings
-•⁠  ⁠Available tax benefits and incentives
+Start the backend server:
+```bash
+npm run server:dev
+```
 
-### Carbon Offset Projects
+Start the frontend development server:
+```bash
+npm run dev
+```
 
-Discover real-world offset opportunities that match your company's profile:
-•⁠  ⁠Projects researched in real-time using Gemini AI
-•⁠  ⁠Detailed project information and implementation guidance
-•⁠  ⁠Direct links to participation opportunities
-•⁠  ⁠Sector-specific alignment with your business
+The application will be available at `http://localhost:5173`
 
-## 🔧 Advanced Usage
+### Production Build
 
-### Custom Deployment
+Build the frontend:
+```bash
+npm run build
+```
 
-To deploy CarbonCTRL to your own infrastructure:
+Deploy the backend to your preferred platform (Render, Railway, Heroku, etc.)
 
-1.⁠ ⁠Build the project:
-   ⁠ bash
-   npm run build
-    ⁠
+Deploy the frontend `dist` folder to Netlify, Vercel, or similar static hosting.
 
-2.⁠ ⁠The ⁠ dist ⁠ folder will contain all necessary assets for deployment.
+## API Endpoints
 
-3.⁠ ⁠For Netlify deployment, include the ⁠ _redirects ⁠ file:
-   
-⁠    /* /index.html 200
-    ⁠
+- `POST /api/auth/signin` - User authentication
+- `POST /api/auth/signup` - User registration
+- `GET /api/carbon/assessment` - Get carbon assessment data
+- `POST /api/carbon/activity` - Add carbon activity
+- `POST /api/gemini/carbon-recommendations` - Get AI recommendations
+- `GET /api/company/profile` - Get company profile
 
-## 🤝 Contributing
+## Deployment
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+### Backend (Render/Railway/Heroku)
+1. Connect your repository
+2. Set environment variables
+3. Deploy with start command: `npm run server`
 
-1.⁠ ⁠Fork the repository
-2.⁠ ⁠Create your feature branch (⁠ git checkout -b feature/amazing-feature ⁠)
-3.⁠ ⁠Commit your changes (⁠ git commit -m 'Add some amazing feature' ⁠)
-4.⁠ ⁠Push to the branch (⁠ git push origin feature/amazing-feature ⁠)
-5.⁠ ⁠Open a Pull Request
+### Frontend (Netlify/Vercel)
+1. Build the project: `npm run build`
+2. Deploy the `dist` folder
+3. Add `_redirects` file for SPA routing: `/* /index.html 200`
 
-## 📄 License
+## Contributing
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/new-feature`
+3. Commit changes: `git commit -m 'Add new feature'`
+4. Push to branch: `git push origin feature/new-feature`
+5. Open a Pull Request
 
-## 🔄 Updates
+## License
 
-•⁠  ⁠Browser cache usage has been removed; all data is now stored exclusively in Supabase.
-
-## 🙏 Acknowledgements
-
-•⁠  ⁠[Supabase](https://supabase.io/) for authentication and database
-•⁠  ⁠[Google Gemini AI](https://ai.google/discover/generativeai/) for AI-powered recommendations
-•⁠  ⁠[React](https://reactjs.org/) and [Vite](https://vitejs.dev/) for the frontend framework
-•⁠  ⁠[Zustand](https://github.com/pmndrs/zustand) for state management
-•⁠  ⁠[Tailwind CSS](https://tailwindcss.com/) for styling
-•⁠  ⁠[Framer Motion](https://www.framer.com/motion/) for animations
-
----
-
-<p align="center">
-  Made with 💚 for a greener future
-</p>
+MIT License - see LICENSE file for details.
