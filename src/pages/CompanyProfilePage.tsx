@@ -18,17 +18,19 @@ const CompanyProfilePage = () => {
     if (profile) {
       setCompanyData(profile);
     } else {
-      // Default company profile for new users
+      // Empty company profile for new users - let them fill it out
       setCompanyData({
-        name: "EcoTech Solutions",
-        employees: "11-50",
-        location: "San Francisco, CA",
-        phone: "+1 (555) 123-4567",
-        email: "contact@ecotechsolutions.com",
-        founded: "2018",
-        industry: "Technology",
-        description: "EcoTech Solutions is a technology company focused on creating sustainable software solutions for businesses looking to reduce their carbon footprint."
+        name: "",
+        employees: "1-10",
+        location: "",
+        phone: "",
+        email: "",
+        founded: "",
+        industry: "",
+        description: ""
       });
+      // Start in editing mode if no profile exists
+      setIsEditing(true);
     }
   }, [profile]);
 

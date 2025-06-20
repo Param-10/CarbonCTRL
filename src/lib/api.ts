@@ -3,7 +3,7 @@ class ApiClient {
   private token: string | null = null;
 
   constructor() {
-    this.baseURL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+    this.baseURL = import.meta.env.VITE_API_URL || 'https://carbonctrl.onrender.com/api';
     // Check for existing token in localStorage
     this.token = localStorage.getItem('carbonctrl_token');
   }

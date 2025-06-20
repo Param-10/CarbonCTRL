@@ -237,8 +237,8 @@ const DashboardPage = () => {
       await addActivity({
         sector: selectedSector,
         subsector: selectedSubsector,
-        activity_amount: parseFloat(activityAmount),
-        activity_unit: getUnitDescription(selectedSector, selectedSubsector)
+        activityAmount: parseFloat(activityAmount),
+        activityUnit: getUnitDescription(selectedSector, selectedSubsector)
       }, user.id);
 
       setSelectedSector('');
@@ -394,11 +394,11 @@ const DashboardPage = () => {
                             {activity.sector} / {activity.subsector}
                           </p>
                           <p className="font-mono text-sm text-emerald-100/70">
-                            Amount: {activity.activity_amount} {activity.activity_unit}
+                            Amount: {activity.activityAmount} {activity.activityUnit}
                           </p>
                         </div>
                         <button
-                          onClick={() => removeActivity(activity.id, user.id)}
+                          onClick={() => removeActivity(activity.id || activity._id || '', user?.id || '')}
                           className="p-2 text-red-400 hover:text-red-300 transition-colors"
                         >
                           <X className="w-5 h-5" />

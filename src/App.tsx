@@ -1,9 +1,10 @@
 import { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { useAuthStore } from './store/authStore';
 import { useCarbonStore } from './store/carbonStore';
 import { useCompanyStore } from './store/companyStore';
 import Layout from './components/Layout';
+import ProtectedRoute from './components/ProtectedRoute';
 import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
 import DashboardPage from './pages/DashboardPage';
@@ -56,23 +57,43 @@ function App() {
         <Route element={<Layout />}>
           <Route 
             path="/dashboard" 
-            element={user ? <DashboardPage /> : <Navigate to="/auth" />} 
+            element={
+              <ProtectedRoute requireCompanyProfile={true}>
+                <DashboardPage />
+              </ProtectedRoute>
+            } 
           />
           <Route 
             path="/settings" 
-            element={user ? <SettingsPage /> : <Navigate to="/auth" />} 
+            element={
+              <ProtectedRoute>
+                <SettingsPage />
+              </ProtectedRoute>
+            } 
           />
           <Route 
             path="/company-profile" 
-            element={user ? <CompanyProfilePage /> : <Navigate to="/auth" />} 
+            element={
+              <ProtectedRoute>
+                <CompanyProfilePage />
+              </ProtectedRoute>
+            } 
           />
           <Route 
             path="/recommendations" 
-            element={user ? <RecommendationsPage /> : <Navigate to="/auth" />} 
+            element={
+              <ProtectedRoute requireCompanyProfile={true}>
+                <RecommendationsPage />
+              </ProtectedRoute>
+            } 
           />
           <Route 
             path="/offset-projects" 
-            element={user ? <OffsetProjectsPage /> : <Navigate to="/auth" />} 
+            element={
+              <ProtectedRoute requireCompanyProfile={true}>
+                <OffsetProjectsPage />
+              </ProtectedRoute>
+            } 
           />
         </Route>
       </Routes>
