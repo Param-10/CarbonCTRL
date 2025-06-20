@@ -1,14 +1,29 @@
 import { create } from 'zustand';
-import { supabase } from '../lib/supabase';
+import { apiClient } from '../lib/api';
+
+interface User {
+  _id: string;
+  id: string; // Keep for compatibility
+  email: string;
+  firstName?: string;
+  lastName?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface Session {
+  access_token: string;
+  user: User;
+}
 
 interface AuthState {
-  user: any | null;
-  session: any | null;
+  user: User | null;
+  session: Session | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
-  setSession: (session: any) => void;
+  setSession: (session: Session | null) => void;
   initializeAuth: () => Promise<void>;
 }
 
@@ -16,52 +31,62 @@ export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   session: null,
   loading: true,
+  
   signIn: async (email, password) => {
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-      if (error) throw error;
-      set({ user: data.user, session: data.session });
+      const response = await apiClient.signIn(email, password);
+      const user = { ...response.user, id: response.user._id }; // Add id for compatibility
+      const session = { access_token: response.token, user };
+      set({ user, session });
     } finally {
       set({ loading: false });
     }
   },
+  
   signUp: async (email, password) => {
     try {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-      });
-      if (error) throw error;
-      set({ user: data.user, session: data.session });
+      const response = await apiClient.signUp(email, password);
+      const user = { ...response.user, id: response.user._id }; // Add id for compatibility
+      const session = { access_token: response.token, user };
+      set({ user, session });
     } finally {
       set({ loading: false });
     }
   },
+  
   signOut: async () => {
     try {
-      await supabase.auth.signOut();
+      await apiClient.signOut();
       set({ user: null, session: null });
     } finally {
       set({ loading: false });
     }
   },
+  
   setSession: (session) => {
-    set({ session, user: session?.user ?? null, loading: false });
+    if (session) {
+      const user = { ...session.user, id: session.user._id }; // Add id for compatibility
+      set({ session: { ...session, user }, user, loading: false });
+    } else {
+      set({ session: null, user: null, loading: false });
+    }
   },
+  
   initializeAuth: async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      set({ session, user: session?.user ?? null });
+      const response = await apiClient.getSession();
+      if (response.session) {
+        const user = { ...response.session.user, id: response.session.user._id }; // Add id for compatibility
+        const session = { ...response.session, user };
+        set({ session, user });
+      } else {
+        set({ session: null, user: null });
+      }
     } finally {
       set({ loading: false });
     }
   },
 }));
 
-// Set up auth state listener
-supabase.auth.onAuthStateChange((_event, session) => {
-  useAuthStore.getState().setSession(session);
-});
+// Note: With JWT tokens, we don't need real-time auth state changes
+// Auth state is managed through the store and API calls
