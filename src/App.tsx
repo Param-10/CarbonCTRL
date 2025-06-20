@@ -1,9 +1,11 @@
 import { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { useAuthStore } from './store/authStore';
 import { useCarbonStore } from './store/carbonStore';
 import { useCompanyStore } from './store/companyStore';
 import Layout from './components/Layout';
+import AppWithPersistence from './components/AppWithPersistence';
+import ProtectedRoute from './components/ProtectedRoute';
 import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
 import DashboardPage from './pages/DashboardPage';
@@ -13,7 +15,7 @@ import RecommendationsPage from './pages/RecommendationsPage';
 import OffsetProjectsPage from './pages/OffsetProjectsPage';
 
 function App() {
-  const { user, initializeAuth } = useAuthStore();
+  const { user, loading, initializeAuth } = useAuthStore();
   const { loadSavedData } = useCarbonStore();
   const { fetchProfile } = useCompanyStore();
 
@@ -48,34 +50,68 @@ function App() {
     }
   }, [user, loadSavedData, fetchProfile]);
 
+  // Show loading screen while initializing auth
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-gray-800 via-emerald-900 to-gray-800 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-emerald-400 border-t-transparent rounded-full animate-spin mb-4"></div>
+          <p className="font-mono text-emerald-100/70">Loading CarbonCTRL...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <Router>
-      <Routes>
-        <Route path="/" element={<LandingPage />} />
-        <Route path="/auth" element={<AuthPage />} />
-        <Route element={<Layout />}>
-          <Route 
-            path="/dashboard" 
-            element={user ? <DashboardPage /> : <Navigate to="/auth" />} 
-          />
-          <Route 
-            path="/settings" 
-            element={user ? <SettingsPage /> : <Navigate to="/auth" />} 
-          />
-          <Route 
-            path="/company-profile" 
-            element={user ? <CompanyProfilePage /> : <Navigate to="/auth" />} 
-          />
-          <Route 
-            path="/recommendations" 
-            element={user ? <RecommendationsPage /> : <Navigate to="/auth" />} 
-          />
-          <Route 
-            path="/offset-projects" 
-            element={user ? <OffsetProjectsPage /> : <Navigate to="/auth" />} 
-          />
-        </Route>
-      </Routes>
+      <AppWithPersistence>
+        <Routes>
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/auth" element={<AuthPage />} />
+          <Route element={<Layout />}>
+            <Route 
+              path="/dashboard" 
+              element={
+                <ProtectedRoute requireCompanyProfile={true}>
+                  <DashboardPage />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/settings" 
+              element={
+                <ProtectedRoute>
+                  <SettingsPage />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/company-profile" 
+              element={
+                <ProtectedRoute>
+                  <CompanyProfilePage />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/recommendations" 
+              element={
+                <ProtectedRoute requireCompanyProfile={true}>
+                  <RecommendationsPage />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/offset-projects" 
+              element={
+                <ProtectedRoute requireCompanyProfile={true}>
+                  <OffsetProjectsPage />
+                </ProtectedRoute>
+              } 
+            />
+          </Route>
+        </Routes>
+      </AppWithPersistence>
     </Router>
   );
 }

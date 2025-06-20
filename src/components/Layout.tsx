@@ -27,6 +27,8 @@ export default function Layout() {
   ];
 
   const handleSignOut = async () => {
+    // Clear saved page before signing out
+    localStorage.removeItem('carbonctrl_last_page');
     await signOut();
     navigate('/auth');
   };

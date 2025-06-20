@@ -18,17 +18,19 @@ const CompanyProfilePage = () => {
     if (profile) {
       setCompanyData(profile);
     } else {
-      // Default company profile for new users
+      // Empty company profile for new users - let them fill it out
       setCompanyData({
-        name: "EcoTech Solutions",
-        employees: "11-50",
-        location: "San Francisco, CA",
-        phone: "+1 (555) 123-4567",
-        email: "contact@ecotechsolutions.com",
-        founded: "2018",
-        industry: "Technology",
-        description: "EcoTech Solutions is a technology company focused on creating sustainable software solutions for businesses looking to reduce their carbon footprint."
+        name: "",
+        employees: "1-10",
+        location: "",
+        phone: "",
+        email: "",
+        founded: "",
+        industry: "",
+        description: ""
       });
+      // Start in editing mode if no profile exists
+      setIsEditing(true);
     }
   }, [profile]);
 
@@ -71,25 +73,62 @@ const CompanyProfilePage = () => {
   if (!companyData) return null;
 
   return (
-    <div className="space-y-10">
+    <div className="fixed inset-0 md:left-64 overflow-y-auto bg-gradient-to-b from-gray-800 via-emerald-900 to-gray-800">
+      <div className="px-8 py-8 space-y-10">
+      {/* Welcome Message for New Users */}
+      {!profile && (
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-gradient-to-r from-emerald-500/20 to-blue-500/20 border border-emerald-500/30 rounded-xl p-6"
+        >
+          <div className="flex items-start gap-4">
+            <div className="bg-emerald-500/20 p-3 rounded-lg flex-shrink-0">
+              <Building2 className="w-6 h-6 text-emerald-400" />
+            </div>
+            <div>
+              <h2 className="font-space text-xl font-semibold text-white mb-2">
+                Welcome to CarbonCTRL! 🌱
+              </h2>
+              <p className="font-mono text-emerald-100/90 leading-relaxed">
+                Before we can help you track and reduce your carbon footprint, we need to know a bit about your organization. 
+                Please fill out your company details below to get started on your sustainability journey!
+              </p>
+              <div className="mt-4 flex items-center gap-2 text-sm font-mono text-emerald-300">
+                <span className="w-2 h-2 bg-emerald-400 rounded-full"></span>
+                <span>This helps us provide personalized carbon insights for your industry and size</span>
+              </div>
+            </div>
+          </div>
+        </motion.div>
+      )}
+
       <div>
         <h1 className="font-space text-4xl font-bold text-white mb-3">Company Profile</h1>
-        <p className="font-mono text-emerald-100/80">Manage your organization's details and view performance metrics</p>
+        <p className="font-mono text-emerald-100/80">
+          {!profile 
+            ? "Set up your organization's details to begin tracking your carbon impact"
+            : "Manage your organization's details and view performance metrics"
+          }
+        </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         {/* Company Info Card */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="feature-card lg:col-span-2 p-10 border border-emerald-500/20 shadow-lg rounded-xl"
+          className="feature-card lg:col-span-3 p-8 border border-emerald-500/20 shadow-xl rounded-2xl bg-gradient-to-br from-gray-800/50 to-gray-900/50 backdrop-blur-sm"
         >
-          <div className="flex items-center justify-between mb-10">
-            <div className="flex items-center gap-5">
-              <div className="bg-emerald-500/20 p-5 rounded-xl">
-                <Building2 className="w-7 h-7 text-emerald-400" />
+          <div className="flex items-center justify-between mb-8">
+            <div className="flex items-center gap-4">
+              <div className="bg-emerald-500/20 p-4 rounded-xl border border-emerald-500/30">
+                <Building2 className="w-6 h-6 text-emerald-400" />
               </div>
-              <h2 className="font-space text-2xl font-semibold text-white">Company Information</h2>
+              <div>
+                <h2 className="font-space text-xl font-semibold text-white">Company Information</h2>
+                <p className="font-mono text-sm text-emerald-100/60 mt-1">Fill out your organization details</p>
+              </div>
             </div>
             <button
               onClick={() => isEditing ? handleSave() : setIsEditing(true)}
@@ -102,7 +141,7 @@ const CompanyProfilePage = () => {
               {isEditing ? (
                 <>
                   <Save className="w-4 h-4" />
-                  Save Changes
+                  {!profile ? 'Complete Setup & Continue' : 'Save Changes'}
                 </>
               ) : (
                 <>
@@ -113,7 +152,7 @@ const CompanyProfilePage = () => {
             </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="space-y-8">
               <div>
                 <label className="block font-mono text-sm text-emerald-100/70 mb-3">Company Name</label>
@@ -122,10 +161,13 @@ const CompanyProfilePage = () => {
                     type="text"
                     value={companyData.name}
                     onChange={(e) => setCompanyData({ ...companyData, name: e.target.value })}
-                    className="w-full bg-gray-800/50 border-2 border-emerald-500/30 rounded-xl py-4 px-6 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono shadow-inner"
+                    placeholder="Enter your company name"
+                    className="w-full bg-gray-800/40 border-2 border-emerald-500/20 rounded-xl py-3 px-5 text-white placeholder-gray-400 focus:outline-none focus:border-emerald-500/60 focus:ring-2 focus:ring-emerald-500/20 font-mono shadow-inner transition-all duration-200"
                   />
                 ) : (
-                  <p className="font-mono text-white bg-gray-800/30 p-4 px-6 rounded-xl border border-gray-700/30">{companyData.name}</p>
+                  <div className="w-full bg-gray-800/20 border border-gray-700/30 rounded-xl py-3 px-5 text-white font-mono min-h-[48px] flex items-center">
+                    {companyData.name || 'Not specified'}
+                  </div>
                 )}
               </div>
 
@@ -269,6 +311,26 @@ const CompanyProfilePage = () => {
                 <p className="font-mono text-white bg-gray-800/30 p-4 px-6 rounded-xl border border-gray-700/30">{companyData.industry}</p>
               )}
             </div>
+            
+            {/* Motivational message for new users */}
+            {!profile && isEditing && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.3 }}
+                className="mt-8 p-6 bg-emerald-500/10 border border-emerald-500/20 rounded-xl"
+              >
+                <div className="flex items-center gap-3 mb-3">
+                  <span className="text-2xl">🚀</span>
+                  <h3 className="font-space text-lg font-semibold text-white">Almost there!</h3>
+                </div>
+                <p className="font-mono text-sm text-emerald-300 leading-relaxed">
+                  Complete your company setup to unlock carbon tracking, AI-powered insights, and personalized recommendations. 
+                  <br />
+                  <span className="text-emerald-400 font-semibold">Let's help you reduce your carbon footprint together! 🌱</span>
+                </p>
+              </motion.div>
+            )}
           </div>
         </motion.div>
 
@@ -278,7 +340,7 @@ const CompanyProfilePage = () => {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
-            className="feature-card p-10 border border-emerald-500/20 shadow-lg rounded-xl"
+            className="feature-card p-6 border border-emerald-500/20 shadow-xl rounded-2xl bg-gradient-to-br from-emerald-900/20 to-blue-900/20 backdrop-blur-sm"
           >
             <div className="flex items-center gap-5 mb-8">
               <div className="bg-emerald-500/20 p-5 rounded-xl">
@@ -304,12 +366,13 @@ const CompanyProfilePage = () => {
                   <span className="font-space text-3xl font-bold text-white">
                     {carbonScore.carbon_rating}
                   </span>
-                  <span className="font-mono text-emerald-400">{carbonScore.rating_description}</span>
+                  <span className="font-mono text-emerald-400">Rating</span>
                 </div>
               </div>
             </div>
           </motion.div>
         )}
+      </div>
       </div>
     </div>
   );
