@@ -12,4 +12,8 @@ PORT=5000
 GEMINI_API_KEY=your-gemini-api-key
 
 # Frontend URL (for CORS)
-FRONTEND_URL=http://localhost:5173 
+FRONTEND_URL=http://localhost:5173
+
+# Google OAuth Configuration
+GOOGLE_CLIENT_ID=your-google-oauth-client-id
+GOOGLE_CLIENT_SECRET=your-google-oauth-client-secret 

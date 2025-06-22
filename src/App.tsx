@@ -53,10 +53,10 @@ function App() {
   // Show loading screen while initializing auth
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-gray-800 via-emerald-900 to-gray-800 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-emerald-400 border-t-transparent rounded-full animate-spin mb-4"></div>
-          <p className="font-mono text-emerald-100/70">Loading CarbonCTRL...</p>
+      <div className="fixed inset-0 bg-gradient-to-b from-gray-800 via-emerald-900 to-gray-800 flex items-center justify-center">
+        <div className="flex flex-col items-center justify-center text-center">
+          <div className="w-12 h-12 border-3 border-emerald-400 border-t-transparent rounded-full animate-spin mb-4"></div>
+          <p className="font-mono text-emerald-100/70 text-lg">Loading CarbonCTRL...</p>
         </div>
       </div>
     );

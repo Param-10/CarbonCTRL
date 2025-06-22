@@ -11,7 +11,9 @@ const userSchema = new mongoose.Schema({
   },
   password: {
     type: String,
-    required: true,
+    required: function() {
+      return !this.googleId; // Password not required for Google OAuth users
+    },
     minlength: 6
   },
   firstName: {
@@ -29,7 +31,18 @@ const userSchema = new mongoose.Schema({
   resetPasswordToken: String,
   resetPasswordExpires: Date,
   emailVerificationToken: String,
-  lastLogin: Date
+  lastLogin: Date,
+  googleId: {
+    type: String,
+    sparse: true
+  },
+  twoFactorSecret: {
+    type: String
+  },
+  twoFactorEnabled: {
+    type: Boolean,
+    default: false
+  }
 }, {
   timestamps: true
 });

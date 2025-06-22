@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Leaf, ArrowRight, Star, AlertTriangle, Clock, DollarSign, Percent, Info, RefreshCw, TrendingUp, Target, Zap } from 'lucide-react';
+import { Leaf, ArrowRight, Star, AlertTriangle, Clock, DollarSign, Percent, RefreshCw, TrendingUp, Target, Zap } from 'lucide-react';
 import { useCarbonStore } from '../store/carbonStore';
 import { useCompanyStore } from '../store/companyStore';
 import { apiClient } from '../lib/api';
@@ -75,39 +75,35 @@ const RecommendationsPage = () => {
     }
   };
 
-  useEffect(() => {
-    const fetchRecommendations = async () => {
-      if (!carbonScore || selectedSectors.length === 0) return;
+  const fetchRecommendations = async () => {
+    if (!carbonScore || selectedSectors.length === 0) return;
 
-      setLoading(true);
-      setError(null);
+    setLoading(true);
+    setError(null);
 
-      try {
-        console.log('Fetching recommendations with enhanced data...');
-        // Use backend API for recommendations
-        const result = await apiClient.getRecommendations({
-          industry: profile?.industry || 'Technology',
-          emissions_data: {
-            total_emissions_tons_co2e: carbonScore.total_emissions_tons_co2e,
-            carbon_rating: carbonScore.carbon_rating,
-            breakdown: carbonScore.emissions_breakdown,
-          },
-          selected_sectors: selectedSectors
-        });
+    try {
+      console.log('Fetching recommendations with enhanced data...');
+      // Use backend API for recommendations
+      const result = await apiClient.getRecommendations({
+        industry: profile?.industry || 'Technology',
+        emissions_data: {
+          total_emissions_tons_co2e: carbonScore.total_emissions_tons_co2e,
+          carbon_rating: carbonScore.carbon_rating,
+          breakdown: carbonScore.emissions_breakdown,
+        },
+        selected_sectors: selectedSectors
+      });
 
-        console.log('Received recommendations:', result);
-        setRecommendationData(result);
-      } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
-        setError(errorMessage);
-        console.error('Error fetching recommendations:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchRecommendations();
-  }, [carbonScore, profile, selectedSectors]);
+      console.log('Received recommendations:', result);
+      setRecommendationData(result);
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
+      setError(errorMessage);
+      console.error('Error fetching recommendations:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSectorToggle = (sector: string) => {
     setSelectedSectors(prev => {
@@ -120,8 +116,7 @@ const RecommendationsPage = () => {
   };
 
   const regenerateRecommendations = () => {
-    // This will trigger the useEffect to regenerate recommendations
-    setLoading(true);
+    fetchRecommendations();
   };
 
   const getPriorityColor = (priority: string) => {
@@ -516,25 +511,32 @@ const RecommendationsPage = () => {
         </div>
       )}
 
-      {/* No recommendations state */}
+      {/* Generate recommendations state */}
       {!loading && recommendationData.recommendations.length === 0 && !error && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           className="feature-card p-8 text-center"
         >
-          <Info className="w-12 h-12 text-blue-400 mx-auto mb-4" />
-          <h2 className="font-space text-xl font-bold text-white mb-2">No Recommendations Available</h2>
+          <Leaf className="w-12 h-12 text-emerald-400 mx-auto mb-4" />
+          <h2 className="font-space text-xl font-bold text-white mb-2">Ready to Generate Recommendations</h2>
           <p className="font-mono text-emerald-100/70 mb-6">
-            Please select at least one sector to receive personalized recommendations.
+            Get AI-powered recommendations based on your carbon assessment and selected sectors.
           </p>
           <button
-            onClick={() => setShowSectorSelection(true)}
-            className="glass-button px-6 py-3 rounded-lg inline-flex items-center gap-2 group"
+            onClick={fetchRecommendations}
+            disabled={selectedSectors.length === 0}
+            className="glass-button px-6 py-3 rounded-lg inline-flex items-center gap-2 group disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <span className="font-mono">Select Sectors</span>
+            <Zap className="w-5 h-5" />
+            <span className="font-mono">Generate Recommendations</span>
             <ArrowRight className="w-5 h-5 transform group-hover:translate-x-1 transition-transform" />
           </button>
+          {selectedSectors.length === 0 && (
+            <p className="font-mono text-sm text-emerald-100/50 mt-4">
+              Please select at least one sector above to generate recommendations.
+            </p>
+          )}
         </motion.div>
       )}
     </div>

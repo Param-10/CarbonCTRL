@@ -104,6 +104,38 @@ class ApiClient {
     });
   }
 
+  async googleAuth(googleToken: string, email: string, name: string) {
+    const response = await this.request('/auth/google', {
+      method: 'POST',
+      body: JSON.stringify({ googleToken, email, name }),
+    });
+    
+    if (response.token) {
+      this.setToken(response.token);
+    }
+    
+    return response;
+  }
+
+  async setup2FA() {
+    return this.request('/auth/2fa/setup', {
+      method: 'POST',
+    });
+  }
+
+  async verify2FA(token: string, secret: string) {
+    return this.request('/auth/2fa/verify', {
+      method: 'POST',
+      body: JSON.stringify({ token, secret }),
+    });
+  }
+
+  async disable2FA() {
+    return this.request('/auth/2fa/disable', {
+      method: 'POST',
+    });
+  }
+
   // Company Profile methods
   async getCompanyProfile() {
     try {

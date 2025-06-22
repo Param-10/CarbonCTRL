@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { User, Shield, Trash2 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
+import { TwoFactorSettings } from '../components/TwoFactorSettings';
 import { apiClient } from '../lib/api';
 
 const SettingsPage = () => {
@@ -245,6 +246,16 @@ const SettingsPage = () => {
           )}
         </div>
       </div>
+
+      {/* Two-Factor Authentication */}
+      <TwoFactorSettings 
+        user={user} 
+        onUpdate={() => {
+          // Refresh user data if needed
+          setNotifications({ type: 'success', message: '2FA settings updated successfully' });
+          setTimeout(() => setNotifications(null), 3000);
+        }} 
+      />
 
       {/* Danger Zone */}
       <div className="feature-card p-8 border-red-500/20">

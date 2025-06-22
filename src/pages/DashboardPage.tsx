@@ -47,7 +47,7 @@ const EmptyState = ({ onAddActivity }: { onAddActivity: () => void }) => (
     <p className="font-mono text-emerald-100/70 max-w-md mx-auto mb-8">
       Start by adding your first activity. We'll help you track and analyze your organization's environmental footprint.
     </p>
-    <div className="flex items-center justify-center space-x-4">
+    <div className="flex items-center justify-center">
       <motion.button
         whileHover={{ scale: 1.05 }}
         whileTap={{ scale: 0.95 }}
@@ -57,20 +57,6 @@ const EmptyState = ({ onAddActivity }: { onAddActivity: () => void }) => (
         <Plus className="w-5 h-5" />
         <span>Add Your First Activity</span>
       </motion.button>
-      <a
-        href="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex"
-      >
-        <motion.button
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-          className="bg-emerald-500 text-white px-6 py-3 rounded-lg inline-flex items-center justify-center gap-3 group font-mono hover:bg-emerald-600 transition-colors"
-        >
-          <span>Watch Demo</span>
-        </motion.button>
-      </a>
     </div>
   </motion.div>
 );
@@ -305,38 +291,62 @@ const DashboardPage = () => {
     const data = getEmissionsByCategory();
     
     return (
-      <ResponsiveContainer width="100%" height={240}>
-        <RechartsPieChart>
-          <Pie
-            data={data}
-            cx="50%"
-            cy="50%"
-            innerRadius={60}
-            outerRadius={80}
-            fill="#8884d8"
-            paddingAngle={5}
-            dataKey="value"
-            label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(1)}%`}
-          >
-            {data.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-            ))}
-          </Pie>
-          <Tooltip 
-            formatter={(value) => [`${Number(value).toFixed(1)} tCO₂e`, 'Emissions']}
-            contentStyle={{ 
-              backgroundColor: 'rgba(0, 0, 0, 0.8)', 
-              border: '1px solid #10b981',
-              borderRadius: '0.5rem',
-              color: '#fff',
-              fontFamily: 'monospace'
-            }}
-            itemStyle={{
-              color: '#fff'
-            }}
-          />
-        </RechartsPieChart>
-      </ResponsiveContainer>
+      <div className="relative overflow-visible">
+        <ResponsiveContainer width="100%" height={320}>
+          <RechartsPieChart margin={{ top: 20, right: 80, bottom: 20, left: 80 }}>
+            <Pie
+              data={data}
+              cx="50%"
+              cy="50%"
+              innerRadius={50}
+              outerRadius={75}
+              fill="#8884d8"
+              paddingAngle={data.length > 1 ? 2 : 0}
+              dataKey="value"
+              label={({ name, percent, cx, cy, midAngle, innerRadius, outerRadius }) => {
+                const RADIAN = Math.PI / 180;
+                const radius = innerRadius + (outerRadius - innerRadius) * 1.2;
+                const x = cx + radius * Math.cos(-midAngle * RADIAN);
+                const y = cy + radius * Math.sin(-midAngle * RADIAN);
+                
+                // Truncate long names
+                const displayName = name.length > 12 ? name.substring(0, 10) + '...' : name;
+                
+                return (
+                  <text 
+                    x={x} 
+                    y={y} 
+                    fill="#fff" 
+                    textAnchor={x > cx ? 'start' : 'end'} 
+                    dominantBaseline="central"
+                    className="font-mono text-xs"
+                    fontSize={11}
+                  >
+                    {`${displayName}: ${(percent * 100).toFixed(1)}%`}
+                  </text>
+                );
+              }}
+            >
+              {data.map((entry, index) => (
+                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+              ))}
+            </Pie>
+            <Tooltip 
+              formatter={(value) => [`${Number(value).toFixed(1)} tCO₂e`, 'Emissions']}
+              contentStyle={{ 
+                backgroundColor: 'rgba(0, 0, 0, 0.8)', 
+                border: '1px solid #10b981',
+                borderRadius: '0.5rem',
+                color: '#fff',
+                fontFamily: 'monospace'
+              }}
+              itemStyle={{
+                color: '#fff'
+              }}
+            />
+          </RechartsPieChart>
+        </ResponsiveContainer>
+      </div>
     );
   };
 

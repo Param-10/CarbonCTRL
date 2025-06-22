@@ -9,6 +9,8 @@ interface User {
   lastName?: string;
   createdAt: string;
   updatedAt: string;
+  twoFactorEnabled?: boolean;
+  googleId?: string;
 }
 
 interface Session {
