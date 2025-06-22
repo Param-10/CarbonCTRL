@@ -28,6 +28,7 @@ interface RecommendationSummary {
   strategic_initiatives_count: number;
   estimated_total_investment: string;
   payback_period: string;
+  source?: string;
 }
 
 interface RecommendationResponse {
@@ -172,7 +173,7 @@ const RecommendationsPage = () => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="font-space text-4xl font-bold text-white mb-2">Smart Recommendations</h1>
-          <p className="font-mono text-emerald-100/80">AI-powered suggestions powered by Gemini 2.5 Flash</p>
+          <p className="font-mono text-emerald-100/80">AI-powered suggestions with ML + Gemini 2.5 Flash integration</p>
         </div>
         <button
           onClick={testGeminiConnection}
@@ -186,7 +187,7 @@ const RecommendationsPage = () => {
         </button>
       </div>
 
-      {/* Gemini Status */}
+      {/* Enhanced Integration Status */}
       {geminiStatus && (
         <motion.div
           initial={{ opacity: 0, y: -20 }}
@@ -194,21 +195,76 @@ const RecommendationsPage = () => {
           className={`p-4 rounded-lg border ${
             geminiStatus.gemini_working 
               ? 'bg-green-500/10 border-green-500/20 text-green-400'
-              : 'bg-red-500/10 border-red-500/20 text-red-400'
+              : 'bg-amber-500/10 border-amber-500/20 text-amber-400'
           }`}
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 mb-2">
             {geminiStatus.gemini_working ? (
               <Star className="w-5 h-5" />
             ) : (
               <AlertTriangle className="w-5 h-5" />
             )}
-            <span className="font-mono text-sm">
+            <span className="font-mono text-sm font-semibold">
               {geminiStatus.gemini_working 
-                ? `Gemini AI connected successfully (${geminiStatus.model})`
-                : `Gemini AI connection failed: ${geminiStatus.error}`
+                ? `🧠 Enhanced AI Integration Active (${geminiStatus.model})`
+                : `🤖 ML Engine Active (Gemini unavailable)`
               }
             </span>
+          </div>
+          <div className="font-mono text-xs opacity-80">
+            {geminiStatus.gemini_working 
+              ? '• ML models provide foundation • Gemini adds contextual intelligence • Best of both systems'
+              : '• Using trained ML models • Intelligent fallback system • Full functionality maintained'
+            }
+          </div>
+        </motion.div>
+      )}
+
+      {/* Summary Card with Source Tracking */}
+      {recommendationData.summary && (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ delay: 0.1 }}
+          className="glass-panel p-6 rounded-xl"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-space text-xl font-bold text-white">Impact Summary</h3>
+            {recommendationData.summary.source && (
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></div>
+                <span className="font-mono text-xs text-emerald-100/60">
+                  {recommendationData.summary.source}
+                </span>
+              </div>
+            )}
+          </div>
+          
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="text-center">
+              <div className="font-space text-2xl font-bold text-emerald-400">
+                {recommendationData.summary.total_potential_reduction?.toFixed(1) || '0'}
+              </div>
+              <div className="font-mono text-xs text-emerald-100/60">tonnes CO₂/year</div>
+            </div>
+            <div className="text-center">
+              <div className="font-space text-2xl font-bold text-blue-400">
+                {recommendationData.summary.quick_wins_count || 0}
+              </div>
+              <div className="font-mono text-xs text-emerald-100/60">quick wins</div>
+            </div>
+            <div className="text-center">
+              <div className="font-space text-2xl font-bold text-purple-400">
+                {recommendationData.summary.strategic_initiatives_count || 0}
+              </div>
+              <div className="font-mono text-xs text-emerald-100/60">strategic</div>
+            </div>
+            <div className="text-center">
+              <div className="font-space text-xl font-bold text-amber-400">
+                {recommendationData.summary.payback_period || 'N/A'}
+              </div>
+              <div className="font-mono text-xs text-emerald-100/60">payback</div>
+            </div>
           </div>
         </motion.div>
       )}

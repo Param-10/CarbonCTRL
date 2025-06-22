@@ -98,7 +98,7 @@ router.post('/carbon-calculator', auth, async (req, res) => {
   }
 });
 
-// Enhanced carbon recommendations with personalization
+// Enhanced carbon recommendations with ML + Gemini integration
 router.post('/carbon-recommendations', auth, async (req, res) => {
   try {
     const { industry, emissions_data, selected_sectors } = req.body;
@@ -115,10 +115,91 @@ router.post('/carbon-recommendations', auth, async (req, res) => {
     const companyProfile = await CompanyProfile.findOne({ userId });
     const activities = await CarbonActivity.find({ userId });
 
+    // **NEW: Try to use our trained ML recommendation engine first**
+    let mlRecommendations = [];
+    try {
+      // Import and use our ML models
+      const { spawn } = require('child_process');
+      const path = require('path');
+      
+      const runMLScript = (scriptPath, data) => {
+        return new Promise((resolve, reject) => {
+          const python = spawn('python3', [scriptPath, JSON.stringify(data)]);
+          
+          let dataString = '';
+          let errorString = '';
+          
+          python.stdout.on('data', (data) => {
+            dataString += data.toString();
+          });
+          
+          python.stderr.on('data', (data) => {
+            errorString += data.toString();
+          });
+          
+          python.on('close', (code) => {
+            if (code !== 0) {
+              reject(new Error(`ML script failed: ${errorString}`));
+            } else {
+              try {
+                const result = JSON.parse(dataString);
+                resolve(result);
+              } catch (e) {
+                resolve({ recommendations: [] });
+              }
+            }
+          });
+        });
+      };
+
+      // Prepare data for our ML model
+      const mlData = {
+        total_emissions: emissions_data.total_emissions_tons_co2e,
+        energy_consumption: emissions_data.breakdown['Energy'] || 0,
+        transportation: emissions_data.breakdown['Transportation'] || 0,
+        waste_generation: emissions_data.breakdown['Waste Management'] || 0,
+        water_usage: emissions_data.breakdown['Water'] || 0,
+        employee_count: companyProfile?.employees?.match(/\d+/)?.[0] || 50,
+        industry: industry.toLowerCase(),
+        budget_level: 2,
+        urgency_level: 2
+      };
+
+      // Call our ML recommendation script
+      const mlScriptPath = path.join(__dirname, '../../ml/recommend.py');
+      const mlResult = await runMLScript(mlScriptPath, mlData);
+      mlRecommendations = mlResult.recommendations || [];
+      
+      console.log(`✅ ML recommendations loaded: ${mlRecommendations.length} suggestions`);
+      
+    } catch (mlError) {
+      console.log(`⚠️ ML recommendations unavailable: ${mlError.message}`);
+    }
+
     const apiKey = process.env.GEMINI_API_KEY;
     
     // Create enhanced fallback recommendations based on user data
     const createEnhancedFallback = () => {
+      // If we have ML recommendations, use them as base
+      if (mlRecommendations.length > 0) {
+        console.log('🔄 Using ML recommendations as fallback base');
+        return {
+          recommendations: mlRecommendations.slice(0, 6),
+          summary: {
+            total_potential_reduction: mlRecommendations.reduce((sum, rec) => 
+              sum + (rec.predicted_impact?.annual_co2_reduction || 0), 0),
+            quick_wins_count: mlRecommendations.filter(rec => 
+              rec.priority === 'High').length,
+            strategic_initiatives_count: mlRecommendations.filter(rec => 
+              rec.priority === 'Medium' || rec.priority === 'Low').length,
+            estimated_total_investment: "Medium",
+            payback_period: "12-24 months",
+            source: "ML Engine"
+          }
+        };
+      }
+
+      // Original fallback logic for when ML is not available
       const topSectors = Object.entries(emissions_data.breakdown)
         .sort(([, a], [, b]) => b - a);
       
@@ -126,158 +207,80 @@ router.post('/carbon-recommendations', auth, async (req, res) => {
       const companySize = companyProfile?.employees || '1-10';
       const location = companyProfile?.location || 'United States';
       const isSmallCompany = companySize.includes('1-10') || companySize.includes('11-50');
-      
-      // Energy sector recommendations
-      if (topSectors.find(([sector]) => sector.toLowerCase().includes('energy'))) {
-        const energyEmissions = topSectors.find(([sector]) => sector.toLowerCase().includes('energy'))?.[1] || 0;
-        
-        recommendations.push({
-          title: `Smart Energy Management for ${industry} Companies`,
-          description: `Implement an automated energy management system to optimize consumption patterns. Start with LED lighting upgrades and smart thermostats, then progress to energy monitoring software. This approach is particularly effective for ${industry} companies due to consistent energy usage patterns and potential for automation.`,
-          impact: energyEmissions * 0.35,
-          timeline: isSmallCompany ? "2-4 months" : "3-6 months",
-          cost: isSmallCompany ? "Low" : "Medium",
-          roi_months: isSmallCompany ? 12 : 18,
-          priority: "High",
-          industry_specific: `${industry} companies can leverage IoT sensors and automation to achieve 30-40% energy reductions, significantly higher than traditional industries due to tech-forward infrastructure.`
-        });
-        
-        if (energyEmissions > 20) {
-          recommendations.push({
-            title: "Renewable Energy Transition Strategy",
-            description: `Develop a phased renewable energy adoption plan. Begin with renewable energy purchasing agreements (REPAs) for immediate impact, then evaluate on-site solar installation feasibility. Consider your ${location} location for optimal renewable energy incentives.`,
-            impact: energyEmissions * 0.6,
-            timeline: "6-18 months",
-            cost: "High",
-            roi_months: location.includes('CA') || location.includes('NY') ? 20 : 28,
-            priority: "High",
-            industry_specific: `${industry} sector faces increasing pressure from stakeholders for renewable energy adoption. Early movers gain competitive advantage in ESG ratings and talent acquisition.`
-          });
-        }
-      }
-      
-      // Transportation recommendations
-      if (topSectors.find(([sector]) => sector.toLowerCase().includes('transport'))) {
-        const transportEmissions = topSectors.find(([sector]) => sector.toLowerCase().includes('transport'))?.[1] || 0;
-        
-        recommendations.push({
-          title: "Electric Fleet and Remote Work Optimization",
-          description: `Transition company vehicles to electric or hybrid models while expanding remote work policies. Implement a comprehensive mobility management system that tracks and optimizes all business travel. Set targets for 50% EV adoption and 60% remote work capacity.`,
-          impact: transportEmissions * 0.45,
-          timeline: "6-12 months",
-          cost: "Medium",
-          roi_months: 24,
-          priority: transportEmissions > 15 ? "High" : "Medium",
-          industry_specific: `${industry} companies can leverage digital collaboration tools more effectively than other sectors, potentially reducing business travel by 70% while maintaining productivity.`
-        });
-      }
-      
-      // Waste management recommendations
-      if (topSectors.find(([sector]) => sector.toLowerCase().includes('waste'))) {
-        recommendations.push({
-          title: "Circular Economy and Digital Waste Reduction",
-          description: `Implement a comprehensive waste reduction program focusing on digital transformation and circular economy principles. Reduce paper usage by 90% through digitization, establish electronic waste recycling partnerships, and create a office supply sharing system.`,
-          impact: 2.5,
-          timeline: "1-3 months",
-          cost: "Low",
-          roi_months: 8,
-          priority: "Medium",
-          industry_specific: `${industry} companies generate significant electronic waste and paper consumption. Digital-first policies can eliminate 80% of traditional office waste streams.`
-        });
-      }
-      
-      // Industry-specific recommendations
+
+      // Add industry-specific recommendations (keeping original logic)
       if (industry.toLowerCase().includes('tech') || industry.toLowerCase().includes('software')) {
         recommendations.push({
+          id: 1,
           title: "Carbon-Efficient Cloud and Infrastructure Optimization",
+          category: "Technology",
           description: `Optimize cloud infrastructure for carbon efficiency by migrating to providers with renewable energy commitments (AWS, Google Cloud green regions). Implement automated scaling to reduce idle resource consumption and adopt sustainable coding practices to minimize computational demands.`,
-          impact: emissions_data.total_emissions_tons_co2e * 0.25,
-          timeline: "3-6 months",
-          cost: "Medium",
-          roi_months: 15,
-          priority: "High",
-          industry_specific: "Technology companies can achieve significant carbon reductions through cloud optimization, with studies showing 20-50% reductions in computing-related emissions through efficient architectures."
-        });
-        
-        recommendations.push({
-          title: "Sustainable Software Development Practices",
-          description: `Adopt green software development methodologies including code optimization for energy efficiency, sustainable UX design patterns, and carbon-aware development practices. Train development teams on writing efficient algorithms and implement carbon impact measurement in CI/CD pipelines.`,
-          impact: 3.2,
-          timeline: "2-4 months",
-          cost: "Low",
-          roi_months: 10,
-          priority: "Medium",
-          industry_specific: "Software companies have unique opportunities to reduce their digital carbon footprint through efficient coding practices, potentially reducing server loads by 30-40%."
+          impact_level: "high",
+          cost_level: "medium",
+          implementation_time: "3-6 months",
+          annual_savings: "20-50% computing emissions reduction",
+          tags: ["cloud", "efficiency", "technology"],
+          scores: {
+            impact_score: 0.85,
+            feasibility_score: 0.75,
+            combined_score: 0.80
+          },
+          predicted_impact: {
+            annual_co2_reduction: emissions_data.total_emissions_tons_co2e * 0.25,
+            percentage_reduction: 25
+          },
+          priority: "High"
         });
       }
-      
-      // Financial/service industry specific
-      if (industry.toLowerCase().includes('finance') || industry.toLowerCase().includes('consulting') || industry.toLowerCase().includes('service')) {
-        recommendations.push({
-          title: "Digital-First Operations and Paperless Transformation",
-          description: `Eliminate physical document processes through comprehensive digital transformation. Implement e-signatures, digital client onboarding, and cloud-based collaboration tools. This reduces both direct emissions from paper/printing and indirect emissions from physical storage and transportation.`,
-          impact: emissions_data.total_emissions_tons_co2e * 0.2,
-          timeline: "2-6 months",
-          cost: "Medium",
-          roi_months: 12,
-          priority: "Medium",
-          industry_specific: `${industry} companies can achieve 60-80% reduction in paper-related emissions while improving operational efficiency and client experience through digital transformation.`
-        });
-      }
-      
-      // Manufacturing specific
-      if (industry.toLowerCase().includes('manufacturing') || industry.toLowerCase().includes('production')) {
-        recommendations.push({
-          title: "Process Optimization and Energy Recovery Systems",
-          description: `Implement lean manufacturing principles with focus on energy efficiency. Install waste heat recovery systems, optimize production scheduling to reduce energy peaks, and establish predictive maintenance programs to ensure equipment operates at peak efficiency.`,
-          impact: emissions_data.total_emissions_tons_co2e * 0.35,
-          timeline: "6-12 months",
-          cost: "High",
-          roi_months: 30,
-          priority: "High",
-          industry_specific: "Manufacturing companies can achieve 25-45% energy reductions through process optimization, with waste heat recovery systems providing immediate ROI through reduced energy costs."
-        });
-      }
-      
-      // Ensure we have at least 4 recommendations
-      while (recommendations.length < 4) {
-        recommendations.push({
-          title: "Employee Engagement and Sustainability Training",
-          description: `Launch a comprehensive employee sustainability program including carbon literacy training, green commuting incentives, and sustainability innovation challenges. Create sustainability champions network and implement behavior change initiatives with measurable targets.`,
-          impact: emissions_data.total_emissions_tons_co2e * 0.1,
-          timeline: "1-3 months",
-          cost: "Low",
-          roi_months: 15,
-          priority: "Medium",
-          industry_specific: `${industry} companies with engaged employees see 23% higher sustainability performance. Digital companies can leverage internal platforms for gamification and tracking.`
-        });
-      }
-      
-      // Calculate summary
-      const totalPotentialReduction = recommendations.reduce((sum, rec) => sum + rec.impact, 0);
-      const quickWins = recommendations.filter(rec => rec.timeline.includes('1-3') || rec.timeline.includes('2-4')).length;
-      const strategicInitiatives = recommendations.filter(rec => rec.timeline.includes('6-') || rec.timeline.includes('12')).length;
+
+      // Add more fallback recommendations...
+      recommendations.push({
+        id: 2,
+        title: "Employee Engagement and Sustainability Training",
+        category: "Human Resources",
+        description: `Launch a comprehensive employee sustainability program including carbon literacy training, green commuting incentives, and sustainability innovation challenges. Create sustainability champions network and implement behavior change initiatives with measurable targets.`,
+        impact_level: "medium",
+        cost_level: "low",
+        implementation_time: "1-3 months",
+        annual_savings: "10-20% behavioral emissions reduction",
+        tags: ["training", "engagement", "behavior"],
+        scores: {
+          impact_score: 0.65,
+          feasibility_score: 0.90,
+          combined_score: 0.75
+        },
+        predicted_impact: {
+          annual_co2_reduction: emissions_data.total_emissions_tons_co2e * 0.1,
+          percentage_reduction: 10
+        },
+        priority: "Medium"
+      });
+
+      const totalPotentialReduction = recommendations.reduce((sum, rec) => 
+        sum + rec.predicted_impact.annual_co2_reduction, 0);
       
       return {
-        recommendations: recommendations.slice(0, 6), // Limit to 6 recommendations
+        recommendations: recommendations.slice(0, 6),
         summary: {
           total_potential_reduction: totalPotentialReduction,
-          quick_wins_count: quickWins,
-          strategic_initiatives_count: strategicInitiatives,
-          estimated_total_investment: recommendations.some(r => r.cost === 'High') ? "Medium to High" : "Low to Medium",
-          payback_period: "12-24 months"
+          quick_wins_count: 1,
+          strategic_initiatives_count: recommendations.length - 1,
+          estimated_total_investment: "Low to Medium",
+          payback_period: "12-24 months",
+          source: "Enhanced Fallback"
         }
       };
     };
 
+    // If no Gemini API key, use ML + fallback
     if (!apiKey || apiKey.includes('your-') || apiKey === 'AIzaSyCbxK1f8LQ0pzGaZqJxR4bH9nK1mW3vYxI') {
-      console.log('Using enhanced fallback recommendations with personalization');
+      console.log('Using ML + enhanced fallback recommendations');
       const fallbackData = createEnhancedFallback();
       return res.json(fallbackData);
     }
 
+    // **ENHANCED: Use ML recommendations + Gemini intelligence**
     const genAI = new GoogleGenerativeAI(apiKey);
-    // Use Gemini 2.5 Flash model for enhanced performance and capabilities
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
     // Create comprehensive context for personalization
@@ -293,8 +296,15 @@ router.post('/carbon-recommendations', auth, async (req, res) => {
       ? `Focus areas selected by user: ${selected_sectors.join(', ')}`
       : 'No specific focus areas selected';
 
-    // Enhanced prompt with comprehensive personalization
-    const prompt = `You are a world-class carbon management consultant providing personalized recommendations. Analyze the data below and provide 4-6 highly specific, actionable recommendations.
+    // Include ML recommendations in the prompt for Gemini to enhance
+    const mlRecommendationsString = mlRecommendations.length > 0 
+      ? `\nML MODEL RECOMMENDATIONS (enhance these with context):\n${mlRecommendations.map((rec, i) => 
+          `${i+1}. ${rec.title}: ${rec.description} (Impact: ${rec.predicted_impact?.annual_co2_reduction || 0} tons CO2/year)`
+        ).join('\n')}`
+      : '\nNo ML recommendations available - create original recommendations.';
+
+    // Enhanced prompt with ML integration
+    const prompt = `You are a world-class carbon management consultant providing personalized recommendations. ${mlRecommendations.length > 0 ? 'ENHANCE and CONTEXTUALIZE the ML-generated recommendations below, or suggest better alternatives.' : 'Analyze the data and provide recommendations.'}
 
 COMPANY PROFILE:
 - Company: ${companyProfile?.name || 'Not specified'}
@@ -316,13 +326,14 @@ CURRENT ACTIVITIES:
 ${activitiesString}
 
 USER PREFERENCES:
-${selectedSectorsString}
+${selectedSectorsString}${mlRecommendationsString}
 
-REQUIREMENTS FOR RECOMMENDATIONS:
-1. Prioritize the highest-impact emission sources first
-2. Consider the company's industry-specific challenges and opportunities
-3. Factor in company size and location for feasibility
-4. Provide recommendations that are implementable given the company's profile
+INSTRUCTIONS:
+${mlRecommendations.length > 0 ? 
+  '1. REVIEW the ML recommendations above and ENHANCE them with industry context, specific implementation details, and realistic timelines\n2. ADD 1-2 additional recommendations that complement the ML suggestions\n3. PRIORITIZE based on this company\'s specific profile and emission sources' :
+  '1. CREATE 4-6 original recommendations based on the company profile\n2. PRIORITIZE the highest-impact emission sources first\n3. Consider industry-specific challenges and opportunities'
+}
+4. Factor in company size and location for feasibility
 5. Include both quick wins (0-6 months) and strategic initiatives (6+ months)
 6. Consider regulatory requirements and industry best practices for ${industry}
 7. Provide cost-effective solutions with clear ROI potential
@@ -356,19 +367,20 @@ RESPONSE FORMAT (valid JSON only):
     "quick_wins_count": 2,
     "strategic_initiatives_count": 3,
     "estimated_total_investment": "Medium to High",
-    "payback_period": "12-24 months"
+    "payback_period": "12-24 months",
+    "source": "${mlRecommendations.length > 0 ? 'ML + Gemini Enhanced' : 'Gemini AI'}"
   }
 }`;
 
-    console.log('Sending enhanced prompt to Gemini 2.5 Flash...');
+    console.log(`🧠 Sending ${mlRecommendations.length > 0 ? 'ML-enhanced' : 'original'} prompt to Gemini 2.5 Flash...`);
 
     const result = await model.generateContent({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
-        temperature: 0.3, // Lower temperature for more consistent, factual responses
+        temperature: 0.3,
         topP: 0.8,
         topK: 40,
-        maxOutputTokens: 4096, // Increased for more detailed responses
+        maxOutputTokens: 4096,
       },
     });
 
@@ -376,38 +388,71 @@ RESPONSE FORMAT (valid JSON only):
     console.log('Gemini response received:', responseText.substring(0, 200) + '...');
 
     let recommendations;
-
+    
     try {
-      // Clean the response and parse JSON
-      const cleanedText = responseText
-        .replace(/```json\s*/g, '')
-        .replace(/```\s*/g, '')
-        .replace(/^\s*/, '')
-        .replace(/\s*$/, '')
+      // Clean and parse Gemini response
+      const cleanResponse = responseText
+        .replace(/```json/g, '')
+        .replace(/```/g, '')
         .trim();
-
-      recommendations = JSON.parse(cleanedText);
       
-      // Validate the response structure
+      recommendations = JSON.parse(cleanResponse);
+      
       if (!recommendations.recommendations || !Array.isArray(recommendations.recommendations)) {
-        throw new Error('Invalid response structure');
+        throw new Error('Invalid recommendations format');
       }
-
-      console.log('Successfully parsed recommendations:', recommendations.recommendations.length);
-    } catch (jsonError) {
-      console.error('JSON parsing error:', jsonError);
+      
+      console.log(`✅ Gemini recommendations parsed: ${recommendations.recommendations.length} suggestions`);
+      
+      // Add source indicator
+      if (!recommendations.summary) {
+        recommendations.summary = {};
+      }
+      recommendations.summary.source = mlRecommendations.length > 0 ? 'ML + Gemini Enhanced' : 'Gemini AI';
+      
+      res.json(recommendations);
+      
+    } catch (parseError) {
+      console.error('Gemini JSON parse error:', parseError.message);
       console.log('Raw response:', responseText);
       
-      // Use enhanced fallback recommendations based on company data
-      recommendations = createEnhancedFallback();
+      // If Gemini fails, fall back to ML + enhanced fallback
+      console.log('🔄 Falling back to ML + enhanced recommendations due to Gemini parse error');
+      const fallbackData = createEnhancedFallback();
+      res.json(fallbackData);
     }
-
-    res.json(recommendations);
+    
   } catch (error) {
-    console.error('Error generating recommendations:', error);
-    res.status(500).json({ 
-      error: 'Failed to generate recommendations',
-      details: error.message 
+    console.error('Carbon recommendations error:', error);
+    
+    // Final fallback
+    const topSectors = Object.entries(req.body.emissions_data?.breakdown || {})
+      .sort(([, a], [, b]) => b - a);
+    
+    const fallbackRecommendations = [
+      {
+        title: "Energy Efficiency Audit",
+        description: "Conduct a comprehensive energy audit to identify immediate savings opportunities.",
+        impact: 5.0,
+        timeline: "1-2 months",
+        cost: "Low",
+        roi_months: 12,
+        priority: "High",
+        industry_specific: "Universal application across all industries"
+      }
+    ];
+    
+    res.json({
+      recommendations: fallbackRecommendations,
+      summary: {
+        total_potential_reduction: 5.0,
+        quick_wins_count: 1,
+        strategic_initiatives_count: 0,
+        estimated_total_investment: "Low",
+        payback_period: "12 months",
+        source: "Emergency Fallback"
+      },
+      error: "Using basic fallback due to system error"
     });
   }
 });

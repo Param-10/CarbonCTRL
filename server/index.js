@@ -9,6 +9,7 @@ import authRoutes from './routes/auth.js';
 import carbonRoutes from './routes/carbon.js';
 import companyRoutes from './routes/company.js';
 import geminiRoutes from './routes/gemini.js';
+import mlRoutes from './routes/ml.js';
 
 dotenv.config();
 
@@ -48,6 +49,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/carbon', carbonRoutes);
 app.use('/api/company', companyRoutes);
 app.use('/api/gemini', geminiRoutes);
+app.use('/api/ml', mlRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
