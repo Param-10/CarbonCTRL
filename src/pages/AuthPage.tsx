@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Leaf, Mail, Lock, ArrowRight } from 'lucide-react';
@@ -32,6 +32,33 @@ export default function AuthPage() {
 
   // Handle Google OAuth callback
   useEffect(() => {
+    const handleGoogleCallback = async (code: string) => {
+      try {
+        console.log('Starting Google OAuth callback processing...');
+        setLoading(true);
+        setError('');
+        
+        // Send authorization code to your backend
+        console.log('Sending auth code to backend...');
+        const response = await apiClient.googleAuth(code, '', '');
+        console.log('Backend response received:', response);
+        
+        // Set the user session in the auth store
+        const user = { ...response.user, id: response.user._id }; // Add id for compatibility
+        const session = { access_token: response.token, user };
+        setSession(session);
+        console.log('User session set, redirecting to dashboard...');
+        
+        navigate('/dashboard');
+      } catch (err: unknown) {
+        console.error('Google OAuth callback error:', err);
+        const errorMessage = err instanceof Error ? err.message : 'Google authentication failed';
+        setError(errorMessage);
+      } finally {
+        setLoading(false);
+      }
+    };
+
     // Listen for messages from the popup window
     const handleMessage = (event: MessageEvent) => {
       if (event.origin !== window.location.origin) return;
@@ -48,34 +75,7 @@ export default function AuthPage() {
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, []); 
-
-  const handleGoogleCallback = async (code: string) => {
-    try {
-      console.log('Starting Google OAuth callback processing...');
-      setLoading(true);
-      setError('');
-      
-      // Send authorization code to your backend
-      console.log('Sending auth code to backend...');
-      const response = await apiClient.googleAuth(code, '', '');
-      console.log('Backend response received:', response);
-      
-      // Set the user session in the auth store
-      const user = { ...response.user, id: response.user._id }; // Add id for compatibility
-      const session = { access_token: response.token, user };
-      setSession(session);
-      console.log('User session set, redirecting to dashboard...');
-      
-      navigate('/dashboard');
-    } catch (err: unknown) {
-      console.error('Google OAuth callback error:', err);
-      const errorMessage = err instanceof Error ? err.message : 'Google authentication failed';
-      setError(errorMessage);
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [navigate, setSession, setError, setLoading]);
 
   const handleGoogleSignIn = () => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || 'your-google-client-id';

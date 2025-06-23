@@ -11,11 +11,8 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 
-# Add models to path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'models'))
-
 try:
-    from carbon_predictor import CarbonPredictionModel
+    from models.carbon_predictor import CarbonPredictionModel
 except ImportError:
     print(json.dumps({"error": "ML models not found. Please run training first."}))
     sys.exit(1)

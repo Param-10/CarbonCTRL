@@ -8,11 +8,8 @@ import sys
 import json
 import os
 
-# Add models to path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'models'))
-
 try:
-    from recommendation_engine import CarbonRecommendationEngine
+    from models.recommendation_engine import CarbonRecommendationEngine
 except ImportError:
     print(json.dumps({"error": "Recommendation engine not found. Please run setup first."}))
     sys.exit(1)

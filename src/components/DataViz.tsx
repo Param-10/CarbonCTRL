@@ -19,7 +19,7 @@ const DataPoint = memo(({ position, color = "#34d399" }: { position: [number, nu
 // DataRing component optimized with memo
 const DataRing = memo(({ index, opacity }: { index: number, opacity: number }) => {
   // Memoize geometry and material
-  const geometry = useMemo(() => new THREE.TorusGeometry(2 + index * 0.3, 0.02, 8, 50), []); // Reduced segments
+  const geometry = useMemo(() => new THREE.TorusGeometry(2 + index * 0.3, 0.02, 8, 50), [index]); // Reduced segments
   
   return (
     <mesh rotation={[Math.PI / 2, 0, 0]}>

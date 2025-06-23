@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Leaf, ArrowRight, Star, AlertTriangle, Clock, DollarSign, Percent, RefreshCw, TrendingUp, Target, Zap } from 'lucide-react';
 import { useCarbonStore } from '../store/carbonStore';

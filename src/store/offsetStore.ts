@@ -1,11 +1,11 @@
 import { create } from 'zustand';
 import { 
   generateOffsetProjects, 
-  generateEnhancedOffsetProjects,
-  OffsetProject as OffsetProjectType,
-  EnhancedOffsetProject 
+  generateEnhancedOffsetProjects
 } from '../lib/gemini';
 import { useCompanyStore } from './companyStore';
+import { useCarbonStore } from './carbonStore';
+
 
 export interface OffsetProject {
   name: string;
@@ -34,7 +34,7 @@ export interface EnhancedProject extends OffsetProject {
 }
 
 // Fallback sample projects to ensure something displays if API fails
-const fallbackProjects: EnhancedOffsetProject[] = [
+const fallbackProjects: EnhancedProject[] = [
   {
     name: "Amazon Rainforest Conservation",
     description: "Protect critical rainforest habitat in the Amazon Basin that sequesters carbon dioxide and preserves biodiversity.",
@@ -114,7 +114,7 @@ const fallbackProjects: EnhancedOffsetProject[] = [
 ];
 
 interface OffsetState {
-  projects: EnhancedOffsetProject[];
+  projects: EnhancedProject[];
   loading: boolean;
   error: string | null;
   fetchOffsetProjects: () => Promise<void>;
@@ -126,7 +126,7 @@ export const useOffsetStore = create<OffsetState>((set) => ({
   error: null,
 
   fetchOffsetProjects: async () => {
-    const { carbonScore } = require('./carbonStore').useCarbonStore.getState();
+    const { carbonScore } = useCarbonStore.getState();
     const { profile } = useCompanyStore.getState();
 
     if (!carbonScore) {
@@ -144,15 +144,32 @@ export const useOffsetStore = create<OffsetState>((set) => ({
         const result = await generateEnhancedOffsetProjects(
           industry,
           {
-            total_emissions: carbonScore.total_emissions_tons_co2e,
+            total_emissions_tons_co2e: carbonScore.total_emissions_tons_co2e,
             breakdown: carbonScore.emissions_breakdown,
-            grade: carbonScore.carbon_rating,
+            carbon_rating: carbonScore.carbon_rating,
           }
         );
 
-        // If we got projects successfully, use them
+        // If we got projects successfully, use them  
         if (result.projects && result.projects.length > 0) {
-          set({ projects: result.projects, loading: false });
+          // Convert basic projects to enhanced format since API returns OffsetProject[]
+          const enhancedResults: EnhancedProject[] = result.projects.map(project => ({
+            name: project.name,
+            description: project.description,
+            location: project.location,
+            cost_per_ton: `$${project.cost_per_ton} per ton CO2e`,
+            total_cost: `$${(project.cost_per_ton * carbonScore.total_emissions_tons_co2e).toLocaleString()} for ${carbonScore.total_emissions_tons_co2e.toLocaleString()} tons`,
+            certification: project.verification_standard,
+            co2_reduction: `${carbonScore.total_emissions_tons_co2e.toLocaleString()} tons per year`,
+            timeframe: project.implementation_timeline,
+            impact: project.estimated_impact,
+            website_url: "",
+            sector_alignment: project.project_type,
+            image_url: "",
+            implementation_links: [],
+            additional_details: []
+          }));
+          set({ projects: enhancedResults, loading: false });
           return;
         }
 
@@ -160,15 +177,25 @@ export const useOffsetStore = create<OffsetState>((set) => ({
         const basicResult = await generateOffsetProjects(
           industry,
           {
-            total_emissions: carbonScore.total_emissions_tons_co2e,
+            total_emissions_tons_co2e: carbonScore.total_emissions_tons_co2e,
             breakdown: carbonScore.emissions_breakdown,
-            grade: carbonScore.carbon_rating,
+            carbon_rating: carbonScore.carbon_rating,
           }
         );
 
         // Convert basic projects to enhanced format
-        const enhancedProjects: EnhancedOffsetProject[] = basicResult.projects.map(project => ({
-          ...project,
+        const enhancedProjects: EnhancedProject[] = basicResult.projects.map(project => ({
+          name: project.name,
+          description: project.description,
+          location: project.location,
+          cost_per_ton: `$${project.cost_per_ton} per ton CO2e`,
+          total_cost: `$${(project.cost_per_ton * carbonScore.total_emissions_tons_co2e).toLocaleString()} for ${carbonScore.total_emissions_tons_co2e.toLocaleString()} tons`,
+          certification: project.verification_standard,
+          co2_reduction: `${carbonScore.total_emissions_tons_co2e.toLocaleString()} tons per year`,
+          timeframe: project.implementation_timeline,
+          impact: project.estimated_impact,
+          website_url: "",
+          sector_alignment: project.project_type,
           image_url: "",
           implementation_links: [],
           additional_details: []
@@ -183,7 +210,7 @@ export const useOffsetStore = create<OffsetState>((set) => ({
           loading: false
         });
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error in offset store:', error);
       // Last resort fallback
       set({ 

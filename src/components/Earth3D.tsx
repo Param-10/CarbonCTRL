@@ -1,6 +1,6 @@
 import { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { Sphere, Stars, Trail, useTexture } from '@react-three/drei';
+import { Stars, Trail } from '@react-three/drei';
 import * as THREE from 'three';
 
 export default function Earth3D() {

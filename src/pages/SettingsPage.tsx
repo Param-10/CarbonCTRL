@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { User, Shield, Trash2 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { TwoFactorSettings } from '../components/TwoFactorSettings';

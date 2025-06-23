@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Building2, Users, MapPin, Phone, Mail, Calendar, BarChart3, AlertTriangle, Save, Edit3 } from 'lucide-react';
 import { useCarbonStore } from '../store/carbonStore';

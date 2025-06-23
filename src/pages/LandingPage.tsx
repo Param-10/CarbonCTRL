@@ -1,27 +1,8 @@
-import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Leaf, ArrowRight, BarChart3, Globe2 } from 'lucide-react';
 
-
-
 const LandingPage = () => {
-  // Add state to control when to load heavy components
-  const [isVisible, setIsVisible] = useState(false);
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
-
-  useEffect(() => {
-    // Check if user prefers reduced motion
-    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
-    setPrefersReducedMotion(mediaQuery.matches);
-
-    // Delay showing the 3D scene for faster initial rendering
-    const timer = setTimeout(() => {
-      setIsVisible(true);
-    }, 500);
-
-    return () => clearTimeout(timer);
-  }, []);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-800 via-emerald-900 to-gray-800 relative overflow-hidden">

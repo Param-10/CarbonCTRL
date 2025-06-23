@@ -1,11 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Leaf, 
   ArrowRight, 
   Globe, 
   AlertTriangle, 
-  Landmark, 
   Clock, 
   DollarSign,
   Trophy,

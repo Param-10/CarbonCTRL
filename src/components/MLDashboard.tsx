@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   LineChart,
   Line,
@@ -78,7 +78,7 @@ const MLDashboard: React.FC<MLDashboardProps> = ({ companyData }) => {
   const [benchmarks, setBenchmarks] = useState<BenchmarkData | null>(null);
 
   // Fetch AI Predictions
-  const fetchPredictions = async () => {
+  const fetchPredictions = useCallback(async () => {
     setLoading(true);
     try {
       const token = localStorage.getItem('carbonctrl_token');
@@ -96,10 +96,10 @@ const MLDashboard: React.FC<MLDashboardProps> = ({ companyData }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   // Fetch AI Recommendations
-  const fetchRecommendations = async () => {
+  const fetchRecommendations = useCallback(async () => {
     setLoading(true);
     try {
       const sampleData = {
@@ -133,10 +133,10 @@ const MLDashboard: React.FC<MLDashboardProps> = ({ companyData }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [companyData]);
 
   // Fetch Anomaly Detection
-  const fetchAnomalies = async () => {
+  const fetchAnomalies = useCallback(async () => {
     setLoading(true);
     try {
       const sampleData = {
@@ -166,10 +166,10 @@ const MLDashboard: React.FC<MLDashboardProps> = ({ companyData }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   // Fetch Industry Benchmarks
-  const fetchBenchmarks = async () => {
+  const fetchBenchmarks = useCallback(async () => {
     setLoading(true);
     try {
       const industry = companyData?.industry || 'manufacturing';
@@ -189,14 +189,14 @@ const MLDashboard: React.FC<MLDashboardProps> = ({ companyData }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [companyData]);
 
   useEffect(() => {
     if (activeTab === 'predictions') fetchPredictions();
     else if (activeTab === 'recommendations') fetchRecommendations();
     else if (activeTab === 'anomalies') fetchAnomalies();
     else if (activeTab === 'benchmarks') fetchBenchmarks();
-  }, [activeTab, companyData]);
+  }, [activeTab, companyData, fetchPredictions, fetchRecommendations, fetchAnomalies, fetchBenchmarks]);
 
   const tabs = [
     { id: 'predictions', label: '🔮 AI Predictions', icon: '📈' },

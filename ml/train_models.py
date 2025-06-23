@@ -11,11 +11,9 @@ import joblib
 from datetime import datetime, timedelta
 import logging
 
-# Add ML models to path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'models'))
-
-from carbon_predictor import CarbonPredictionModel
-from recommendation_engine import CarbonRecommendationEngine
+# Import ML models from the models package
+from models.carbon_predictor import CarbonPredictionModel
+from models.recommendation_engine import CarbonRecommendationEngine
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
