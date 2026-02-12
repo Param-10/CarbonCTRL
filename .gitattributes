@@ -1,2 +1,11 @@
-# Reduce HTML weighting in GitHub language stats
-*.html linguist-detectable=false
+# Exclude generated/build files from language detection
+dist/** linguist-detectable=false
+build/** linguist-detectable=false
+node_modules/** linguist-detectable=false
+stats.html linguist-detectable=false
+index.html linguist-detectable=false
+public/** linguist-detectable=false
+
+# Mark build artifacts as vendored
+dist/** linguist-vendored
+build/** linguist-vendored
