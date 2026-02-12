@@ -199,10 +199,10 @@ const MLDashboard: React.FC<MLDashboardProps> = ({ companyData }) => {
   }, [activeTab, companyData, fetchPredictions, fetchRecommendations, fetchAnomalies, fetchBenchmarks]);
 
   const tabs = [
-    { id: 'predictions', label: '🔮 AI Predictions', icon: '📈' },
-    { id: 'recommendations', label: '💡 Smart Recommendations', icon: '🎯' },
-    { id: 'anomalies', label: '🚨 Anomaly Detection', icon: '⚠️' },
-    { id: 'benchmarks', label: '📊 Industry Benchmarks', icon: '🏭' }
+    { id: 'predictions', label: 'Predictions', icon: '' },
+    { id: 'recommendations', label: 'Recommendations', icon: '' },
+    { id: 'anomalies', label: 'Anomaly Detection', icon: '' },
+    { id: 'benchmarks', label: 'Industry Benchmarks', icon: '' }
   ];
 
   const getPriorityColor = (priority: string) => {
@@ -251,8 +251,8 @@ const MLDashboard: React.FC<MLDashboardProps> = ({ companyData }) => {
     <div className="w-full max-w-7xl mx-auto p-6 space-y-6">
       {/* Header */}
       <div className="text-center">
-        <h1 className="text-4xl font-bold text-gray-900 mb-2">🧠 AI/ML Dashboard</h1>
-        <p className="text-gray-600">Advanced machine learning insights for carbon management</p>
+        <h1 className="text-4xl font-bold text-gray-900 mb-2">ML Dashboard</h1>
+        <p className="text-gray-600">Machine learning insights for carbon management</p>
       </div>
 
       {/* Navigation Tabs */}
@@ -267,7 +267,7 @@ const MLDashboard: React.FC<MLDashboardProps> = ({ companyData }) => {
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
             }`}
           >
-            <span className="mr-2">{tab.icon}</span>
+            {tab.icon ? <span className="mr-2">{tab.icon}</span> : null}
             {tab.label}
           </button>
         ))}
@@ -289,7 +289,7 @@ const MLDashboard: React.FC<MLDashboardProps> = ({ companyData }) => {
           className="space-y-6"
         >
           <div className="bg-white rounded-lg shadow-lg p-6">
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">🔮 7-Day Carbon Emission Predictions</h2>
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">7-Day Carbon Emission Predictions</h2>
             
             {predictions ? (
               <div className="space-y-6">
@@ -360,7 +360,7 @@ const MLDashboard: React.FC<MLDashboardProps> = ({ companyData }) => {
           className="space-y-6"
         >
           <div className="bg-white rounded-lg shadow-lg p-6">
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">💡 AI-Powered Recommendations</h2>
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">Recommendations</h2>
             
             {recommendations.length > 0 ? (
               <div className="grid gap-6">
@@ -441,7 +441,7 @@ const MLDashboard: React.FC<MLDashboardProps> = ({ companyData }) => {
           className="space-y-6"
         >
           <div className="bg-white rounded-lg shadow-lg p-6">
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">🚨 Anomaly Detection Results</h2>
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">Anomaly Detection Results</h2>
             
             {anomalies ? (
               <div className="space-y-6">
@@ -449,7 +449,7 @@ const MLDashboard: React.FC<MLDashboardProps> = ({ companyData }) => {
                   <div className={`p-4 rounded-lg border ${anomalies.is_anomaly ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
                     <h3 className="font-semibold">Status</h3>
                     <p className={`text-2xl font-bold ${anomalies.is_anomaly ? 'text-red-600' : 'text-green-600'}`}>
-                      {anomalies.is_anomaly ? '⚠️ Anomaly Detected' : '✅ Normal'}
+                      {anomalies.is_anomaly ? 'Anomaly Detected' : 'Normal'}
                     </p>
                   </div>
                   
@@ -505,7 +505,7 @@ const MLDashboard: React.FC<MLDashboardProps> = ({ companyData }) => {
           className="space-y-6"
         >
           <div className="bg-white rounded-lg shadow-lg p-6">
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">📊 Industry Benchmarks</h2>
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">Industry Benchmarks</h2>
             
             {benchmarks ? (
               <div className="space-y-6">

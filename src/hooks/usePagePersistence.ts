@@ -19,7 +19,7 @@ export function usePagePersistence() {
       const protectedPaths = ['/dashboard', '/recommendations', '/company-profile', '/settings', '/offset-projects'];
       if (protectedPaths.includes(location.pathname)) {
         localStorage.setItem(LAST_PAGE_KEY, location.pathname);
-        console.log('💾 CarbonCTRL: Saved current page to localStorage:', location.pathname);
+        console.log('CarbonCTRL: Saved current page to localStorage:', location.pathname);
       }
     }
   }, [location.pathname, user]);
@@ -33,7 +33,7 @@ export function usePagePersistence() {
       // If we're on landing page or auth page, redirect to last saved page or dashboard
       if (currentPath === '/' || currentPath === '/auth') {
         const targetPage = lastPage || DEFAULT_AUTHENTICATED_PAGE;
-        console.log('🔄 CarbonCTRL: Restoring user to last visited page:', targetPage);
+        console.log('CarbonCTRL: Restoring user to last visited page:', targetPage);
         setIsRestoringPage(true);
         navigate(targetPage, { replace: true });
         // Reset the restoration state after a brief delay
@@ -44,7 +44,7 @@ export function usePagePersistence() {
         const protectedPaths = ['/dashboard', '/recommendations', '/company-profile', '/settings', '/offset-projects'];
         if (protectedPaths.includes(currentPath)) {
           localStorage.setItem(LAST_PAGE_KEY, currentPath);
-          console.log('🔄 CarbonCTRL: Updated last page on direct load:', currentPath);
+          console.log('CarbonCTRL: Updated last page on direct load:', currentPath);
         }
       }
     } else if (!loading && !user) {
@@ -54,7 +54,7 @@ export function usePagePersistence() {
       // If we're on a protected page without auth, redirect to landing
       const protectedPaths = ['/dashboard', '/recommendations', '/company-profile', '/settings', '/offset-projects'];
       if (protectedPaths.includes(location.pathname)) {
-        console.log('🔄 Redirecting unauthenticated user to landing page');
+        console.log('Redirecting unauthenticated user to landing page');
         navigate(DEFAULT_UNAUTHENTICATED_PAGE, { replace: true });
       }
     }

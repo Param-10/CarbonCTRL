@@ -88,7 +88,7 @@ const CompanyProfilePage = () => {
             </div>
             <div>
               <h2 className="font-space text-xl font-semibold text-white mb-2">
-                Welcome to CarbonCTRL! 🌱
+                Welcome to CarbonCTRL
               </h2>
               <p className="font-mono text-emerald-100/90 leading-relaxed">
                 Before we can help you track and reduce your carbon footprint, we need to know a bit about your organization. 
@@ -321,13 +321,12 @@ const CompanyProfilePage = () => {
                 className="mt-8 p-6 bg-emerald-500/10 border border-emerald-500/20 rounded-xl"
               >
                 <div className="flex items-center gap-3 mb-3">
-                  <span className="text-2xl">🚀</span>
-                  <h3 className="font-space text-lg font-semibold text-white">Almost there!</h3>
+                  <h3 className="font-space text-lg font-semibold text-white">Almost there</h3>
                 </div>
                 <p className="font-mono text-sm text-emerald-300 leading-relaxed">
                   Complete your company setup to unlock carbon tracking, AI-powered insights, and personalized recommendations. 
                   <br />
-                  <span className="text-emerald-400 font-semibold">Let's help you reduce your carbon footprint together! 🌱</span>
+                  <span className="text-emerald-400 font-semibold">Let's help you reduce your carbon footprint together.</span>
                 </p>
               </motion.div>
             )}

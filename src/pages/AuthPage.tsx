@@ -53,7 +53,11 @@ export default function AuthPage() {
       } catch (err: unknown) {
         console.error('Google OAuth callback error:', err);
         const errorMessage = err instanceof Error ? err.message : 'Google authentication failed';
-        setError(errorMessage);
+        if (errorMessage.includes('NetworkError') || errorMessage.includes('Failed to fetch')) {
+          setError('Authentication failed: API unreachable. Check VITE_API_URL and that the server is running.');
+        } else {
+          setError(errorMessage);
+        }
       } finally {
         setLoading(false);
       }
@@ -79,6 +83,10 @@ export default function AuthPage() {
 
   const handleGoogleSignIn = () => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || 'your-google-client-id';
+    if (!clientId || clientId === 'your-google-client-id') {
+      setError('Google sign-in is not configured. Set VITE_GOOGLE_CLIENT_ID in your frontend environment.');
+      return;
+    }
     const redirectUri = window.location.origin + '/oauth-callback.html'; // Fix: match the actual file
     
     // Debug logging

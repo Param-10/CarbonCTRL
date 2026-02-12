@@ -170,10 +170,10 @@ router.post('/carbon-recommendations', auth, async (req, res) => {
       const mlResult = await runMLScript(mlScriptPath, mlData);
       mlRecommendations = mlResult.recommendations || [];
       
-      console.log(`✅ ML recommendations loaded: ${mlRecommendations.length} suggestions`);
+      console.log(`ML recommendations loaded: ${mlRecommendations.length} suggestions`);
       
     } catch (mlError) {
-      console.log(`⚠️ ML recommendations unavailable: ${mlError.message}`);
+      console.log(`ML recommendations unavailable: ${mlError.message}`);
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
@@ -182,7 +182,7 @@ router.post('/carbon-recommendations', auth, async (req, res) => {
     const createEnhancedFallback = () => {
       // If we have ML recommendations, use them as base
       if (mlRecommendations.length > 0) {
-        console.log('🔄 Using ML recommendations as fallback base');
+        console.log('Using ML recommendations as fallback base');
         return {
           recommendations: mlRecommendations.slice(0, 6),
           summary: {
@@ -372,7 +372,7 @@ RESPONSE FORMAT (valid JSON only):
   }
 }`;
 
-    console.log(`🧠 Sending ${mlRecommendations.length > 0 ? 'ML-enhanced' : 'original'} prompt to Gemini 2.5 Flash...`);
+    console.log(`Sending ${mlRecommendations.length > 0 ? 'ML-enhanced' : 'original'} prompt to Gemini 2.5 Flash...`);
 
     const result = await model.generateContent({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
@@ -402,7 +402,7 @@ RESPONSE FORMAT (valid JSON only):
         throw new Error('Invalid recommendations format');
       }
       
-      console.log(`✅ Gemini recommendations parsed: ${recommendations.recommendations.length} suggestions`);
+      console.log(`Gemini recommendations parsed: ${recommendations.recommendations.length} suggestions`);
       
       // Add source indicator
       if (!recommendations.summary) {
@@ -417,7 +417,7 @@ RESPONSE FORMAT (valid JSON only):
       console.log('Raw response:', responseText);
       
       // If Gemini fails, fall back to ML + enhanced fallback
-      console.log('🔄 Falling back to ML + enhanced recommendations due to Gemini parse error');
+      console.log('Falling back to ML + enhanced recommendations due to Gemini parse error');
       const fallbackData = createEnhancedFallback();
       res.json(fallbackData);
     }

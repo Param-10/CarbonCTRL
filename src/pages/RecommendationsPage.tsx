@@ -172,8 +172,8 @@ const RecommendationsPage = () => {
     <div className="space-y-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="font-space text-4xl font-bold text-white mb-2">Smart Recommendations</h1>
-          <p className="font-mono text-emerald-100/80">AI-powered suggestions with ML + Gemini 2.5 Flash integration</p>
+          <h1 className="font-space text-4xl font-bold text-white mb-2">Recommendations</h1>
+          <p className="font-mono text-emerald-100/80">ML-driven suggestions with optional Gemini enhancement</p>
         </div>
         <button
           onClick={testGeminiConnection}
@@ -206,8 +206,8 @@ const RecommendationsPage = () => {
             )}
             <span className="font-mono text-sm font-semibold">
               {geminiStatus.gemini_working 
-                ? `🧠 Enhanced AI Integration Active (${geminiStatus.model})`
-                : `🤖 ML Engine Active (Gemini unavailable)`
+                ? `Enhanced integration active (${geminiStatus.model})`
+                : `ML engine active (Gemini unavailable)`
               }
             </span>
           </div>

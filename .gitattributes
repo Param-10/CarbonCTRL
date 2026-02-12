@@ -1,0 +1,2 @@
+# Reduce HTML weighting in GitHub language stats
+*.html linguist-detectable=false
