@@ -37,12 +37,16 @@ cd server && node index.js
 npm run dev
 ```
 
-## ML Models
+## ML Models & Limitations
 
-- **Prediction**: LSTM + Attention for 7-day carbon forecasting (trained on 1500+ days)
-- **Recommendations**: 8+ strategies with industry-specific personalization
-- **Response time**: <100ms average
+> [!NOTE]
+> **Synthetic Data & Scope Notice:**
+> The forecasting models and benchmark heuristics in this prototype are trained on **synthetically generated emissions time-series data** for hackathon demonstration purposes.
+> Predictions represent regression point estimates for short-term (7-day) trend exploration and should not be treated as calibrated real-world industrial carbon audits.
 
-Trained on synthetic data.
+- **Prediction Engine**: LSTM + Attention sequence model for 7-day carbon emission trajectory forecasting
+- **Recommendation Engine**: Multi-factor scoring prioritizing low-cost, high-impact emission reduction strategies tailored by industry profile
+- **Anomaly Detection**: Statistical and isolation-based detection of sudden emission spikes
+
 ## License
 MIT License – see [LICENSE](LICENSE).
