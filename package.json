@@ -13,8 +13,7 @@
     "server:dev": "nodemon server/index.js",
     "start": "npm run server",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "migrate:googleid-index": "node server/scripts/migrate-googleid-index.js"
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@google-cloud/local-auth": "^3.0.1",

@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Leaf, Mail, Lock, User, ArrowLeft, ArrowRight } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
+import { ApiError, type GoogleLinkOptions } from '../lib/api';
 import { initializeGoogleSignIn, loadGoogleIdentityScript } from '../lib/googleIdentity';
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
@@ -13,6 +14,9 @@ const GOOGLE_BUTTON_MAX_WIDTH = 400;
 const MIN_PASSWORD_LENGTH = 6;
 const MAX_PASSWORD_LENGTH = 72;
 const MAX_NAME_LENGTH = 100;
+const LINK_PASSWORD_REQUIRED = 'LINK_PASSWORD_REQUIRED';
+
+const isLinkPasswordError = (err: unknown) => err instanceof ApiError && err.code === LINK_PASSWORD_REQUIRED;
 
 const getErrorMessage = (err: unknown, fallback: string) => {
   const message = err instanceof Error ? err.message : fallback;
@@ -30,6 +34,9 @@ export default function AuthPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  // Google credential waiting for the existing account's password (or consent to remove it)
+  const [pendingGoogleCredential, setPendingGoogleCredential] = useState<string | null>(null);
+  const [linkPassword, setLinkPassword] = useState('');
   const googleButtonRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const { signIn, signUp, signInWithGoogle } = useAuthStore();
@@ -52,7 +59,12 @@ export default function AuthPage() {
             await signInWithGoogle(credential);
             navigate('/dashboard');
           } catch (err: unknown) {
-            setError(getErrorMessage(err, 'Google sign-in failed'));
+            if (isLinkPasswordError(err)) {
+              setLinkPassword('');
+              setPendingGoogleCredential(credential);
+            } else {
+              setError(getErrorMessage(err, 'Google sign-in failed'));
+            }
           } finally {
             setLoading(false);
           }
@@ -96,6 +108,36 @@ export default function AuthPage() {
     }
   };
 
+  const linkGoogleAccount = async (link: GoogleLinkOptions) => {
+    if (!pendingGoogleCredential) return;
+    setError('');
+    setLoading(true);
+
+    try {
+      await signInWithGoogle(pendingGoogleCredential, link);
+      navigate('/dashboard');
+    } catch (err: unknown) {
+      // Any other failure (e.g. the Google credential expired) needs a fresh Google sign-in
+      if (!isLinkPasswordError(err)) {
+        setPendingGoogleCredential(null);
+      }
+      setError(getErrorMessage(err, 'Could not connect Google'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLinkSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    linkGoogleAccount({ password: linkPassword });
+  };
+
+  const cancelGoogleLink = () => {
+    setPendingGoogleCredential(null);
+    setLinkPassword('');
+    setError('');
+  };
+
   const handleToggleMode = () => {
     setIsSignIn(!isSignIn);
     setError('');
@@ -124,7 +166,7 @@ export default function AuthPage() {
           </div>
 
           <h2 className="text-3xl font-bold text-center text-white mb-8 font-space">
-            {isSignIn ? 'Welcome Back' : 'Create Account'}
+            {pendingGoogleCredential ? 'Connect Google' : isSignIn ? 'Welcome Back' : 'Create Account'}
           </h2>
 
           {error && (
@@ -134,7 +176,8 @@ export default function AuthPage() {
           )}
 
           {GOOGLE_CLIENT_ID && (
-            <>
+            // Hidden rather than unmounted while linking: Google renders its button into this container only once
+            <div className={pendingGoogleCredential ? 'hidden' : undefined}>
               {/* Google Identity Services renders its own button into this container */}
               <div ref={googleButtonRef} className="w-full flex justify-center mb-6 min-h-[44px]" />
 
@@ -146,90 +189,144 @@ export default function AuthPage() {
                   <span className="px-2 bg-gray-800 text-emerald-100/70 font-mono">or</span>
                 </div>
               </div>
-            </>
+            </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-6">
-            {!isSignIn && (
+          {pendingGoogleCredential ? (
+            <form onSubmit={handleLinkSubmit} className="space-y-6">
+              <p className="text-emerald-100/80 text-sm font-mono">
+                An account with this email already exists. Enter its password to connect your Google account.
+              </p>
+
               <div>
-                <label className="block text-sm font-medium text-gray-200 mb-2 font-mono" htmlFor="name">
-                  Name
+                <label className="block text-sm font-medium text-gray-200 mb-2 font-mono" htmlFor="link-password">
+                  Password
                 </label>
                 <div className="relative">
-                  <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                  <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
                   <input
-                    id="name"
-                    type="text"
-                    autoComplete="name"
-                    maxLength={MAX_NAME_LENGTH}
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
+                    id="link-password"
+                    type="password"
+                    autoComplete="current-password"
+                    value={linkPassword}
+                    onChange={(e) => setLinkPassword(e.target.value)}
                     className="w-full bg-gray-800/50 border border-emerald-500/30 rounded-lg py-3 px-10 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
-                    placeholder="Enter your full name"
+                    placeholder="Enter your password"
+                    required
+                    autoFocus
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full bg-emerald-500 text-white py-3 px-6 rounded-lg font-semibold hover:bg-emerald-600 transition-colors duration-200 flex items-center justify-center gap-2 group disabled:opacity-50"
+              >
+                <span className="font-space">{loading ? 'Please wait...' : 'Connect Google'}</span>
+                <ArrowRight className="w-5 h-5 transform group-hover:translate-x-1 transition-transform" />
+              </button>
+
+              <div className="border-t border-emerald-500/30 pt-6">
+                <p className="text-emerald-100/70 text-xs font-mono mb-3">
+                  Don't know this password? Continue with Google only. The password will be removed and every other
+                  device signed in to this account will be signed out.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => linkGoogleAccount({ discardPassword: true })}
+                  disabled={loading}
+                  className="w-full border border-emerald-500/30 text-emerald-300 py-2 px-4 rounded-lg font-mono text-sm hover:bg-emerald-500/10 transition-colors duration-200 disabled:opacity-50"
+                >
+                  Continue with Google only
+                </button>
+              </div>
+            </form>
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-6">
+              {!isSignIn && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-200 mb-2 font-mono" htmlFor="name">
+                    Name
+                  </label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <input
+                      id="name"
+                      type="text"
+                      autoComplete="name"
+                      maxLength={MAX_NAME_LENGTH}
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      className="w-full bg-gray-800/50 border border-emerald-500/30 rounded-lg py-3 px-10 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
+                      placeholder="Enter your full name"
+                      required
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-200 mb-2 font-mono" htmlFor="email">
+                  Email
+                </label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                  <input
+                    id="email"
+                    type="email"
+                    autoComplete="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full bg-gray-800/50 border border-emerald-500/30 rounded-lg py-3 px-10 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
+                    placeholder="Enter your email"
                     required
                   />
                 </div>
               </div>
-            )}
 
-            <div>
-              <label className="block text-sm font-medium text-gray-200 mb-2 font-mono" htmlFor="email">
-                Email
-              </label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-                <input
-                  id="email"
-                  type="email"
-                  autoComplete="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full bg-gray-800/50 border border-emerald-500/30 rounded-lg py-3 px-10 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
-                  placeholder="Enter your email"
-                  required
-                />
+              <div>
+                <label className="block text-sm font-medium text-gray-200 mb-2 font-mono" htmlFor="password">
+                  Password
+                </label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                  <input
+                    id="password"
+                    type="password"
+                    autoComplete={isSignIn ? 'current-password' : 'new-password'}
+                    minLength={isSignIn ? undefined : MIN_PASSWORD_LENGTH}
+                    maxLength={isSignIn ? undefined : MAX_PASSWORD_LENGTH}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full bg-gray-800/50 border border-emerald-500/30 rounded-lg py-3 px-10 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
+                    placeholder={isSignIn ? 'Enter your password' : 'At least 6 characters'}
+                    required
+                  />
+                </div>
               </div>
-            </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-200 mb-2 font-mono" htmlFor="password">
-                Password
-              </label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-                <input
-                  id="password"
-                  type="password"
-                  autoComplete={isSignIn ? 'current-password' : 'new-password'}
-                  minLength={isSignIn ? undefined : MIN_PASSWORD_LENGTH}
-                  maxLength={isSignIn ? undefined : MAX_PASSWORD_LENGTH}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full bg-gray-800/50 border border-emerald-500/30 rounded-lg py-3 px-10 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
-                  placeholder={isSignIn ? 'Enter your password' : 'At least 6 characters'}
-                  required
-                />
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-emerald-500 text-white py-3 px-6 rounded-lg font-semibold hover:bg-emerald-600 transition-colors duration-200 flex items-center justify-center gap-2 group disabled:opacity-50"
-            >
-              <span className="font-space">
-                {loading ? 'Please wait...' : isSignIn ? 'Sign In' : 'Create Account'}
-              </span>
-              <ArrowRight className="w-5 h-5 transform group-hover:translate-x-1 transition-transform" />
-            </button>
-          </form>
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full bg-emerald-500 text-white py-3 px-6 rounded-lg font-semibold hover:bg-emerald-600 transition-colors duration-200 flex items-center justify-center gap-2 group disabled:opacity-50"
+              >
+                <span className="font-space">
+                  {loading ? 'Please wait...' : isSignIn ? 'Sign In' : 'Create Account'}
+                </span>
+                <ArrowRight className="w-5 h-5 transform group-hover:translate-x-1 transition-transform" />
+              </button>
+            </form>
+          )}
 
           <div className="mt-6 text-center">
             <button
-              onClick={handleToggleMode}
+              onClick={pendingGoogleCredential ? cancelGoogleLink : handleToggleMode}
               className="text-emerald-300 hover:text-emerald-200 transition-colors duration-200 font-mono text-sm"
             >
-              {isSignIn ? "Don't have an account? Sign Up" : 'Already have an account? Sign In'}
+              {pendingGoogleCredential
+                ? 'Cancel'
+                : isSignIn ? "Don't have an account? Sign Up" : 'Already have an account? Sign In'}
             </button>
           </div>
         </motion.div>

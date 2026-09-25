@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { apiClient } from '../lib/api';
+import { apiClient, type GoogleLinkOptions } from '../lib/api';
 import { useCompanyStore } from './companyStore';
 import { useCarbonStore } from './carbonStore';
 import { useOffsetStore } from './offsetStore';
@@ -28,8 +28,10 @@ interface AuthState {
   user: User | null;
   session: Session | null;
   loading: boolean;
+  // The stored session could not be checked (server unreachable), as opposed to being rejected
+  sessionCheckFailed: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signInWithGoogle: (credential: string) => Promise<void>;
+  signInWithGoogle: (credential: string, link?: GoogleLinkOptions) => Promise<void>;
   signUp: (name: string, email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   clearSession: () => void;
@@ -53,6 +55,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   session: null,
   loading: true,
+  sessionCheckFailed: false,
 
   signIn: async (email, password) => {
     try {
@@ -64,9 +67,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  signInWithGoogle: async (credential) => {
+  signInWithGoogle: async (credential, link) => {
     try {
-      const response = await apiClient.googleAuth(credential);
+      const response = await apiClient.googleAuth(credential, link);
       resetUserData();
       set(toSessionState(response));
     } finally {
@@ -93,12 +96,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   clearSession: () => {
     apiClient.setToken(null);
     resetUserData();
-    set({ user: null, session: null, loading: false });
+    set({ user: null, session: null, loading: false, sessionCheckFailed: false });
   },
 
   initializeAuth: async () => {
     try {
       await get().refreshUser();
+      set({ sessionCheckFailed: false });
+    } catch (error) {
+      // The token is kept (only a 401 clears it), so retrying can restore the session
+      console.error('Could not check the stored session:', error);
+      set({ sessionCheckFailed: true });
     } finally {
       set({ loading: false });
     }

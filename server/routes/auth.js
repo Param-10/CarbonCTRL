@@ -18,11 +18,15 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_NAME_LENGTH = 100;
 const NAME_ERROR = 'Please enter your name (up to 100 characters)';
 const DUPLICATE_KEY_ERROR = 11000;
+// Tells the client to ask for the existing account's password before linking Google to it
+const LINK_PASSWORD_REQUIRED = 'LINK_PASSWORD_REQUIRED';
 
 // Stricter limit on endpoints that check credentials, to slow down brute forcing
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10,
+  // Only failed attempts count, so people sharing an IP (office, school) are not locked out by normal use
+  skipSuccessfulRequests: true,
   standardHeaders: true,
   legacyHeaders: false,
   skip: () => process.env.NODE_ENV === 'test',
@@ -51,7 +55,8 @@ const getPasswordError = (password) => {
     return 'Password must be at least 6 characters long';
   }
   if (Buffer.byteLength(password, 'utf8') > MAX_PASSWORD_BYTES) {
-    return 'Password must be at most 72 characters long';
+    // The limit is in bytes, so accented and non-Latin characters count as more than one
+    return 'Password is too long. Use at most 72 characters, or fewer with accented or non-Latin characters';
   }
   return null;
 };
@@ -164,7 +169,7 @@ router.post('/signin', authLimiter, async (req, res) => {
 // Sign in with Google (ID token from Google Identity Services)
 router.post('/google', authLimiter, async (req, res) => {
   try {
-    const { credential } = req.body;
+    const { credential, password, discardPassword } = req.body;
 
     if (!isNonEmptyString(credential)) {
       return res.status(400).json({ error: 'Google credential is required' });
@@ -198,26 +203,40 @@ router.post('/google', authLimiter, async (req, res) => {
           return res.status(409).json({ error: 'This email is linked to a different Google account' });
         }
 
-        // Email sign-up never proves ownership, so anyone could have registered this address first.
-        // Drop a password nobody verified and sign out its sessions before handing the account over.
-        if (!user.isEmailVerified) {
-          user.password = undefined;
-          user.tokenVersion = (user.tokenVersion ?? 0) + 1;
+        // Email sign-up never proves ownership, so the password may belong to whoever registered
+        // this address first. Keep it only if the Google-verified owner can confirm it.
+        if (!user.isEmailVerified && user.password) {
+          if (isNonEmptyString(password)) {
+            if (!await user.comparePassword(password)) {
+              return res.status(400).json({ error: 'Password is incorrect', code: LINK_PASSWORD_REQUIRED });
+            }
+          } else if (discardPassword === true) {
+            // The owner does not know this password: remove it and sign out every session made with it
+            user.password = undefined;
+            user.tokenVersion = (user.tokenVersion ?? 0) + 1;
+          } else {
+            return res.status(409).json({
+              error: 'An account with this email already exists. Enter its password to connect Google.',
+              code: LINK_PASSWORD_REQUIRED
+            });
+          }
         }
 
-        // Google has verified ownership of the email, so link it to the existing account
+        // Google has verified ownership of the email, so link it to the existing account.
+        // completeLogin below saves these changes together with lastLogin.
         user.googleId = payload.sub;
         user.isEmailVerified = true;
         if (!user.name) user.name = getGoogleName(payload);
-        await user.save();
       } else {
         try {
           user = await User.create({
             name: getGoogleName(payload),
             email,
             googleId: payload.sub,
-            isEmailVerified: true
+            isEmailVerified: true,
+            lastLogin: new Date()
           });
+          return sendSession(res, user);
         } catch (createError) {
           if (createError.code !== DUPLICATE_KEY_ERROR) throw createError;
           // A simultaneous first sign-in (double-click, two tabs) may have just created this user
@@ -239,13 +258,10 @@ router.post('/google', authLimiter, async (req, res) => {
 // Get current user (verify session)
 router.get('/session', auth, async (req, res) => {
   try {
-    // Reload with the password hash so toJSON can report hasPassword
-    const user = await User.findById(req.userId);
-
     res.json({
       session: {
         access_token: req.header('Authorization')?.replace('Bearer ', ''),
-        user: user.toJSON()
+        user: req.user.toJSON()
       }
     });
   } catch (error) {
@@ -255,14 +271,11 @@ router.get('/session', auth, async (req, res) => {
 });
 
 // Update user
-router.put('/user', auth, async (req, res) => {
+router.put('/user', authLimiter, auth, async (req, res) => {
   try {
     const { name, password, currentPassword } = req.body;
-    const user = await User.findById(req.userId);
-
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    // Loaded by the auth middleware, which already rejects tokens for deleted users
+    const { user } = req;
 
     // Update fields if provided
     if (name !== undefined) {
@@ -273,7 +286,7 @@ router.put('/user', auth, async (req, res) => {
       user.name = parsedName;
     }
 
-const isChangingPassword = password !== undefined;
+    const isChangingPassword = password !== undefined;
     if (isChangingPassword) {
       if (typeof password !== 'string') {
         return res.status(400).json({ error: 'Invalid password' });
@@ -313,11 +326,8 @@ const isChangingPassword = password !== undefined;
 router.delete('/user', authLimiter, auth, async (req, res) => {
   try {
     const { password } = req.body || {};
-    const user = await User.findById(req.userId);
-
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    // Loaded by the auth middleware, which already rejects tokens for deleted users
+    const { user } = req;
 
     // Re-confirm identity for accounts that have a password
     if (user.password) {

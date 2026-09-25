@@ -45,8 +45,8 @@ const googlePayload = (overrides = {}) => ({
   ...overrides
 });
 
-const googleSignIn = (credential = 'google-id-token') =>
-  request(app).post('/api/auth/google').send({ credential });
+const googleSignIn = (credential = 'google-id-token', extra = {}) =>
+  request(app).post('/api/auth/google').send({ credential, ...extra });
 
 describe('email/password auth', () => {
   it('signs in regardless of email casing', async () => {
@@ -86,6 +86,16 @@ describe('email/password auth', () => {
 
     expect(res.status).toBe(400);
     expect(await User.countDocuments()).toBe(0);
+  });
+
+  it('explains that non-Latin characters count extra toward the length limit', async () => {
+    // 30 characters, but 90 bytes in UTF-8
+    const res = await request(app)
+      .post('/api/auth/signup')
+      .send({ name: NAME, email: 'user@example.com', password: '密'.repeat(30) });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/non-Latin characters/);
   });
 
   it('returns a clean error when two sign-ups for one email race', async () => {
@@ -197,6 +207,7 @@ describe('Google sign-in', () => {
       isEmailVerified: true,
       hasPassword: false
     });
+    expect(res.body.user.lastLogin).toBeTruthy();
   });
 
   it('returns the same account on every sign-in with the same Google account', async () => {
@@ -209,25 +220,56 @@ describe('Google sign-in', () => {
     expect(await User.countDocuments()).toBe(1);
   });
 
-  it('links Google to an existing email/password account with the same email', async () => {
+  it('asks for the password before linking Google to an email sign-up, and changes nothing', async () => {
     await signUp('jane@gmail.com');
     verifyGoogleIdToken.mockResolvedValue(googlePayload({ email: 'Jane@Gmail.com' }));
 
     const res = await googleSignIn();
 
-    expect(res.status).toBe(200);
-    expect(await User.countDocuments()).toBe(1);
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('LINK_PASSWORD_REQUIRED');
+    expect(res.body.token).toBeUndefined();
     const user = await User.findOne({ email: 'jane@gmail.com' });
-    expect(user.googleId).toBe('google-sub-123');
-    expect(user.isEmailVerified).toBe(true);
+    expect(user.googleId).toBeUndefined();
+    expect(user.isEmailVerified).toBe(false);
   });
 
-  it('locks out whoever registered the email first when Google proves the real owner', async () => {
+  it('links Google and keeps the password and other sessions when the owner confirms it', async () => {
+    const passwordToken = await signUp('jane@gmail.com');
+    verifyGoogleIdToken.mockResolvedValue(googlePayload());
+
+    const res = await googleSignIn('google-id-token', { password: PASSWORD });
+
+    expect(res.status).toBe(200);
+    expect(res.body.user).toMatchObject({ hasPassword: true, isEmailVerified: true });
+    expect(res.body.user.lastLogin).toBeTruthy();
+    expect(await User.countDocuments()).toBe(1);
+    expect((await User.findOne({ email: 'jane@gmail.com' })).googleId).toBe('google-sub-123');
+
+    const passwordSignIn = await request(app)
+      .post('/api/auth/signin')
+      .send({ email: 'jane@gmail.com', password: PASSWORD });
+    expect(passwordSignIn.status).toBe(200);
+    expect((await authed('get', '/api/auth/session', passwordToken)).status).toBe(200);
+  });
+
+  it('rejects a wrong password when linking and links nothing', async () => {
+    await signUp('jane@gmail.com');
+    verifyGoogleIdToken.mockResolvedValue(googlePayload());
+
+    const res = await googleSignIn('google-id-token', { password: 'wrong-pass' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('LINK_PASSWORD_REQUIRED');
+    expect((await User.findOne({ email: 'jane@gmail.com' })).googleId).toBeUndefined();
+  });
+
+  it('locks out whoever registered the email first when the Google owner continues without the password', async () => {
     // An attacker signs up with the victim's address before the victim ever uses the app
     const attackerToken = await signUp('jane@gmail.com', 'attacker-pass');
     verifyGoogleIdToken.mockResolvedValue(googlePayload());
 
-    const res = await googleSignIn();
+    const res = await googleSignIn('google-id-token', { discardPassword: true });
 
     expect(res.status).toBe(200);
     expect(res.body.user.hasPassword).toBe(false);
@@ -242,6 +284,16 @@ describe('Google sign-in', () => {
 
     const googleSession = await authed('get', '/api/auth/session', res.body.token);
     expect(googleSession.status).toBe(200);
+  });
+
+  it('only discards the password for an explicit boolean true', async () => {
+    await signUp('jane@gmail.com');
+    verifyGoogleIdToken.mockResolvedValue(googlePayload());
+
+    const res = await googleSignIn('google-id-token', { discardPassword: 'true' });
+
+    expect(res.status).toBe(409);
+    expect((await User.findOne({ email: 'jane@gmail.com' })).password).toBeTruthy();
   });
 
   it('keeps the password when linking an account whose email is already verified', async () => {

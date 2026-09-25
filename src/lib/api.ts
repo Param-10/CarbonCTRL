@@ -1,11 +1,20 @@
 export class ApiError extends Error {
   status: number;
+  // Machine-readable reason sent by the server for errors the client handles specially
+  code?: string;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.code = code;
   }
+}
+
+// Confirms linking Google to an existing email/password account: its password, or consent to remove it
+export interface GoogleLinkOptions {
+  password?: string;
+  discardPassword?: boolean;
 }
 
 class ApiClient {
@@ -63,7 +72,7 @@ class ApiClient {
           this.unauthorizedHandler?.();
         }
 
-        throw new ApiError(errorData.error || `HTTP ${response.status}`, response.status);
+        throw new ApiError(errorData.error || `HTTP ${response.status}`, response.status, errorData.code);
       }
 
       return response.json();
@@ -151,10 +160,10 @@ class ApiClient {
     return response;
   }
 
-  async googleAuth(credential: string) {
+  async googleAuth(credential: string, link: GoogleLinkOptions = {}) {
     const response = await this.request('/auth/google', {
       method: 'POST',
-      body: JSON.stringify({ credential }),
+      body: JSON.stringify({ credential, ...link }),
     });
 
     if (response.token) {

@@ -3,8 +3,8 @@ import User from '../models/User.js';
 const INDEX_NAME = 'googleId_1';
 
 // Older databases have a non-unique googleId_1 index. Mongoose's auto-indexing cannot change the
-// options of an existing index, so it fails (and only logs) when the schema asks for unique: true.
-// Replaces the old index with the unique one. Safe to run more than once.
+// options of an existing index, so it fails silently when the schema asks for unique: true.
+// Replaces the old index with the unique one. Runs on every server start, so it must stay idempotent.
 export async function ensureUniqueGoogleIdIndex() {
   const collection = User.collection;
   const indexes = await collection.indexes().catch((error) => {
