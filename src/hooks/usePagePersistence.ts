@@ -9,7 +9,7 @@ const DEFAULT_UNAUTHENTICATED_PAGE = '/';
 export function usePagePersistence() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, loading } = useAuthStore();
+  const { user, loading, sessionCheckFailed } = useAuthStore();
   const [isRestoringPage, setIsRestoringPage] = useState(false);
 
   // Save current page to localStorage whenever location changes
@@ -47,7 +47,9 @@ export function usePagePersistence() {
           console.log('CarbonCTRL: Updated last page on direct load:', currentPath);
         }
       }
-    } else if (!loading && !user) {
+    // A session that could not be checked (server unreachable) is not a sign-out:
+    // stay put so ProtectedRoute can offer a retry, and keep the saved page for after it succeeds
+    } else if (!loading && !user && !sessionCheckFailed) {
       // Clear last page when user logs out
       localStorage.removeItem(LAST_PAGE_KEY);
       
@@ -58,7 +60,7 @@ export function usePagePersistence() {
         navigate(DEFAULT_UNAUTHENTICATED_PAGE, { replace: true });
       }
     }
-  }, [user, loading, location.pathname, navigate]);
+  }, [user, loading, sessionCheckFailed, location.pathname, navigate]);
 
   // Get the last saved page (useful for initial routing decisions)
   const getLastPage = () => {
