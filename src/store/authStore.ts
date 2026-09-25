@@ -1,16 +1,16 @@
 import { create } from 'zustand';
 import { apiClient } from '../lib/api';
+import { useCompanyStore } from './companyStore';
+import { useCarbonStore } from './carbonStore';
+import { useOffsetStore } from './offsetStore';
 
 interface User {
   _id: string;
   id: string; // Keep for compatibility
   email: string;
-  firstName?: string;
-  lastName?: string;
+  name?: string;
   createdAt: string;
   updatedAt: string;
-  twoFactorEnabled?: boolean;
-  googleId?: string;
   hasPassword?: boolean;
 }
 
@@ -24,21 +24,15 @@ interface AuthResponse {
   token: string;
 }
 
-// When 2FA is enabled, sign-in returns a short-lived token instead of a session
-export interface LoginResult {
-  twoFactorToken?: string;
-}
-
 interface AuthState {
   user: User | null;
   session: Session | null;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<LoginResult>;
-  signInWithGoogle: (credential: string) => Promise<LoginResult>;
-  completeTwoFactor: (twoFactorToken: string, code: string) => Promise<void>;
-  signUp: (email: string, password: string) => Promise<void>;
+  signIn: (email: string, password: string) => Promise<void>;
+  signInWithGoogle: (credential: string) => Promise<void>;
+  signUp: (name: string, email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
-  setSession: (session: Session | null) => void;
+  clearSession: () => void;
   initializeAuth: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -46,6 +40,13 @@ interface AuthState {
 const toSessionState = (response: AuthResponse) => {
   const user = { ...response.user, id: response.user._id }; // Add id for compatibility
   return { user, session: { access_token: response.token, user } };
+};
+
+// Drop everything cached for the previous user so the next sign-in starts clean
+const resetUserData = () => {
+  useCompanyStore.getState().reset();
+  useCarbonStore.getState().reset();
+  useOffsetStore.getState().reset();
 };
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -56,11 +57,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   signIn: async (email, password) => {
     try {
       const response = await apiClient.signIn(email, password);
-      if (response.twoFactorRequired) {
-        return { twoFactorToken: response.twoFactorToken };
-      }
+      resetUserData();
       set(toSessionState(response));
-      return {};
     } finally {
       set({ loading: false });
     }
@@ -69,28 +67,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   signInWithGoogle: async (credential) => {
     try {
       const response = await apiClient.googleAuth(credential);
-      if (response.twoFactorRequired) {
-        return { twoFactorToken: response.twoFactorToken };
-      }
-      set(toSessionState(response));
-      return {};
-    } finally {
-      set({ loading: false });
-    }
-  },
-
-  completeTwoFactor: async (twoFactorToken, code) => {
-    try {
-      const response = await apiClient.completeTwoFactorLogin(twoFactorToken, code);
+      resetUserData();
       set(toSessionState(response));
     } finally {
       set({ loading: false });
     }
   },
 
-  signUp: async (email, password) => {
+  signUp: async (name, email, password) => {
     try {
-      const response = await apiClient.signUp(email, password);
+      const response = await apiClient.signUp(name, email, password);
+      resetUserData();
       set(toSessionState(response));
     } finally {
       set({ loading: false });
@@ -98,21 +85,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   signOut: async () => {
-    try {
-      await apiClient.signOut();
-      set({ user: null, session: null });
-    } finally {
-      set({ loading: false });
-    }
+    await apiClient.signOut();
+    get().clearSession();
   },
 
-  setSession: (session) => {
-    if (session) {
-      const user = { ...session.user, id: session.user._id }; // Add id for compatibility
-      set({ session: { ...session, user }, user, loading: false });
-    } else {
-      set({ session: null, user: null, loading: false });
-    }
+  // Clear the local session without calling the server (sign-out, expired or revoked token)
+  clearSession: () => {
+    apiClient.setToken(null);
+    resetUserData();
+    set({ user: null, session: null, loading: false });
   },
 
   initializeAuth: async () => {
@@ -134,6 +115,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 }));
+
+// A rejected session token anywhere in the app signs the user out locally
+apiClient.setUnauthorizedHandler(() => {
+  if (useAuthStore.getState().user) {
+    useAuthStore.getState().clearSession();
+  }
+});
 
 // Note: With JWT tokens, we don't need real-time auth state changes
 // Auth state is managed through the store and API calls

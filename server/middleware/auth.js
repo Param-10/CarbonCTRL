@@ -10,16 +10,15 @@ const auth = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-    // Purpose-scoped tokens (e.g. the pending-2FA token) are not session tokens
-    if (decoded.purpose) {
-      return res.status(401).json({ error: 'Invalid token.' });
-    }
-
     const user = await User.findById(decoded.userId).select('-password');
     
     if (!user) {
       return res.status(401).json({ error: 'Invalid token. User not found.' });
+    }
+
+    // Tokens issued before a password change carry an older version
+    if ((decoded.tokenVersion ?? 0) !== (user.tokenVersion ?? 0)) {
+      return res.status(401).json({ error: 'Session expired. Please sign in again.' });
     }
 
     req.user = user;

@@ -1,14 +1,18 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useRef } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Leaf, Mail, Lock, ArrowRight, ShieldCheck } from 'lucide-react';
-import { useAuthStore, LoginResult } from '../store/authStore';
-import { loadGoogleIdentityScript } from '../lib/googleIdentity';
+import { Leaf, Mail, Lock, User, ArrowLeft, ArrowRight } from 'lucide-react';
+import { useAuthStore } from '../store/authStore';
+import { initializeGoogleSignIn, loadGoogleIdentityScript } from '../lib/googleIdentity';
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 // Google renders its button at a fixed pixel width within this range
 const GOOGLE_BUTTON_MIN_WIDTH = 200;
 const GOOGLE_BUTTON_MAX_WIDTH = 400;
+// Must match the server's limits
+const MIN_PASSWORD_LENGTH = 6;
+const MAX_PASSWORD_LENGTH = 72;
+const MAX_NAME_LENGTH = 100;
 
 const getErrorMessage = (err: unknown, fallback: string) => {
   const message = err instanceof Error ? err.message : fallback;
@@ -19,29 +23,20 @@ const getErrorMessage = (err: unknown, fallback: string) => {
 };
 
 export default function AuthPage() {
-  const [isSignIn, setIsSignIn] = useState(true);
+  const [searchParams] = useSearchParams();
+  const [isSignIn, setIsSignIn] = useState(searchParams.get('mode') !== 'signup');
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [twoFactorToken, setTwoFactorToken] = useState<string | null>(null);
-  const [twoFactorCode, setTwoFactorCode] = useState('');
   const googleButtonRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
-  const { signIn, signUp, signInWithGoogle, completeTwoFactor } = useAuthStore();
+  const { signIn, signUp, signInWithGoogle } = useAuthStore();
 
-  const handleLoginResult = useCallback((result: LoginResult) => {
-    if (result.twoFactorToken) {
-      setTwoFactorToken(result.twoFactorToken);
-      setTwoFactorCode('');
-      return;
-    }
-    navigate('/dashboard');
-  }, [navigate]);
-
-  // Render Google's sign-in button (hidden during the 2FA step)
+  // Render Google's sign-in button
   useEffect(() => {
-    if (!GOOGLE_CLIENT_ID || twoFactorToken) return;
+    if (!GOOGLE_CLIENT_ID) return;
 
     let cancelled = false;
 
@@ -50,19 +45,17 @@ export default function AuthPage() {
         const container = googleButtonRef.current;
         if (cancelled || !container || !window.google) return;
 
-        window.google.accounts.id.initialize({
-          client_id: GOOGLE_CLIENT_ID,
-          callback: async ({ credential }) => {
-            setError('');
-            setLoading(true);
-            try {
-              handleLoginResult(await signInWithGoogle(credential));
-            } catch (err: unknown) {
-              setError(getErrorMessage(err, 'Google sign-in failed'));
-            } finally {
-              setLoading(false);
-            }
-          },
+        initializeGoogleSignIn(GOOGLE_CLIENT_ID, async (credential) => {
+          setError('');
+          setLoading(true);
+          try {
+            await signInWithGoogle(credential);
+            navigate('/dashboard');
+          } catch (err: unknown) {
+            setError(getErrorMessage(err, 'Google sign-in failed'));
+          } finally {
+            setLoading(false);
+          }
         });
 
         window.google.accounts.id.renderButton(container, {
@@ -82,7 +75,7 @@ export default function AuthPage() {
     return () => {
       cancelled = true;
     };
-  }, [twoFactorToken, handleLoginResult, signInWithGoogle]);
+  }, [navigate, signInWithGoogle]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -91,11 +84,11 @@ export default function AuthPage() {
 
     try {
       if (isSignIn) {
-        handleLoginResult(await signIn(email, password));
+        await signIn(email, password);
       } else {
-        await signUp(email, password);
-        navigate('/dashboard');
+        await signUp(name, email, password);
       }
+      navigate('/dashboard');
     } catch (err: unknown) {
       setError(getErrorMessage(err, 'An unexpected error occurred'));
     } finally {
@@ -103,99 +96,22 @@ export default function AuthPage() {
     }
   };
 
-  const handleTwoFactorSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!twoFactorToken) return;
-
-    setError('');
-    setLoading(true);
-
-    try {
-      await completeTwoFactor(twoFactorToken, twoFactorCode);
-      navigate('/dashboard');
-    } catch (err: unknown) {
-      setError(getErrorMessage(err, 'Invalid verification code'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleBackToSignIn = () => {
-    setTwoFactorToken(null);
-    setTwoFactorCode('');
+  const handleToggleMode = () => {
+    setIsSignIn(!isSignIn);
     setError('');
   };
-
-  if (twoFactorToken) {
-    return (
-      <div className="min-h-screen bg-gradient-to-b from-gray-800 via-emerald-900 to-gray-800 flex items-center justify-center px-4">
-        <div className="w-full max-w-md">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="glass-card p-8 rounded-2xl"
-          >
-            <div className="flex justify-center mb-8">
-              <div className="bg-emerald-500/20 p-4 rounded-full">
-                <ShieldCheck className="w-8 h-8 text-emerald-400" />
-              </div>
-            </div>
-
-            <h2 className="text-3xl font-bold text-center text-white mb-4 font-space">
-              Two-Factor Authentication
-            </h2>
-            <p className="text-center text-emerald-100/70 font-mono text-sm mb-8">
-              Enter the 6-digit code from your authenticator app.
-            </p>
-
-            {error && (
-              <div className="bg-red-500/10 border border-red-500/50 rounded-lg p-4 mb-6">
-                <p className="text-red-400 text-sm font-mono">{error}</p>
-              </div>
-            )}
-
-            <form onSubmit={handleTwoFactorSubmit} className="space-y-6">
-              <input
-                id="two-factor-code"
-                type="text"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                autoFocus
-                value={twoFactorCode}
-                onChange={(e) => setTwoFactorCode(e.target.value.replace(/\D/g, ''))}
-                className="w-full bg-gray-800/50 border border-emerald-500/30 rounded-lg py-3 px-4 text-white text-center text-2xl tracking-[0.5em] placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
-                placeholder="000000"
-                maxLength={6}
-                aria-label="Verification code"
-                required
-              />
-
-              <button
-                type="submit"
-                disabled={loading || twoFactorCode.length !== 6}
-                className="w-full bg-emerald-500 text-white py-3 px-6 rounded-lg font-semibold hover:bg-emerald-600 transition-colors duration-200 flex items-center justify-center gap-2 disabled:opacity-50"
-              >
-                <span className="font-space">{loading ? 'Verifying...' : 'Verify'}</span>
-              </button>
-            </form>
-
-            <div className="mt-6 text-center">
-              <button
-                onClick={handleBackToSignIn}
-                className="text-emerald-300 hover:text-emerald-200 transition-colors duration-200 font-mono text-sm"
-              >
-                Back to sign in
-              </button>
-            </div>
-          </motion.div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-800 via-emerald-900 to-gray-800 flex items-center justify-center px-4">
       <div className="w-full max-w-md">
+        <Link
+          to="/"
+          className="inline-flex items-center gap-2 mb-4 text-emerald-100/70 hover:text-emerald-200 transition-colors duration-200 font-mono text-sm group"
+        >
+          <ArrowLeft className="w-4 h-4 transform group-hover:-translate-x-1 transition-transform" />
+          <span>Back</span>
+        </Link>
+
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -234,6 +150,28 @@ export default function AuthPage() {
           )}
 
           <form onSubmit={handleSubmit} className="space-y-6">
+            {!isSignIn && (
+              <div>
+                <label className="block text-sm font-medium text-gray-200 mb-2 font-mono" htmlFor="name">
+                  Name
+                </label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                  <input
+                    id="name"
+                    type="text"
+                    autoComplete="name"
+                    maxLength={MAX_NAME_LENGTH}
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="w-full bg-gray-800/50 border border-emerald-500/30 rounded-lg py-3 px-10 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
+                    placeholder="Enter your full name"
+                    required
+                  />
+                </div>
+              </div>
+            )}
+
             <div>
               <label className="block text-sm font-medium text-gray-200 mb-2 font-mono" htmlFor="email">
                 Email
@@ -263,10 +201,12 @@ export default function AuthPage() {
                   id="password"
                   type="password"
                   autoComplete={isSignIn ? 'current-password' : 'new-password'}
+                  minLength={isSignIn ? undefined : MIN_PASSWORD_LENGTH}
+                  maxLength={isSignIn ? undefined : MAX_PASSWORD_LENGTH}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full bg-gray-800/50 border border-emerald-500/30 rounded-lg py-3 px-10 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
-                  placeholder="Enter your password"
+                  placeholder={isSignIn ? 'Enter your password' : 'At least 6 characters'}
                   required
                 />
               </div>
@@ -286,7 +226,7 @@ export default function AuthPage() {
 
           <div className="mt-6 text-center">
             <button
-              onClick={() => setIsSignIn(!isSignIn)}
+              onClick={handleToggleMode}
               className="text-emerald-300 hover:text-emerald-200 transition-colors duration-200 font-mono text-sm"
             >
               {isSignIn ? "Don't have an account? Sign Up" : 'Already have an account? Sign In'}

@@ -1,10 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import request from 'supertest';
-import mongoose from 'mongoose';
-import speakeasy from 'speakeasy';
-import { MongoMemoryServer } from 'mongodb-memory-server';
+import jwt from 'jsonwebtoken';
 
 import app from '../app.js';
+import { useTestDatabase } from './helpers/db.js';
 import User from '../models/User.js';
 import CompanyProfile from '../models/CompanyProfile.js';
 import CarbonActivity from '../models/CarbonActivity.js';
@@ -18,35 +17,17 @@ vi.mock('../services/googleAuth.js', () => ({
   verifyGoogleIdToken: vi.fn()
 }));
 
-let mongod;
+useTestDatabase();
 
-beforeAll(async () => {
-  mongod = await MongoMemoryServer.create();
-  await mongoose.connect(mongod.getUri());
-  // Build unique indexes before tests rely on them
-  await User.syncIndexes();
-});
-
-afterEach(async () => {
+afterEach(() => {
   vi.clearAllMocks();
-  await Promise.all(
-    Object.values(mongoose.connection.collections).map((collection) => collection.deleteMany({}))
-  );
-});
-
-afterAll(async () => {
-  await mongoose.disconnect();
-  await mongod.stop();
 });
 
 const PASSWORD = 'secret123';
-
-const totp = (secret, time) => speakeasy.totp({ secret, encoding: 'base32', ...(time && { time }) });
-// A code from an hour ago is outside the verification window
-const staleTotp = (secret) => totp(secret, Math.floor(Date.now() / 1000) - 3600);
+const NAME = 'Ada Lovelace';
 
 const signUp = async (email = 'user@example.com', password = PASSWORD) => {
-  const res = await request(app).post('/api/auth/signup').send({ email, password });
+  const res = await request(app).post('/api/auth/signup').send({ name: NAME, email, password });
   expect(res.status).toBe(201);
   return res.body.token;
 };
@@ -54,20 +35,11 @@ const signUp = async (email = 'user@example.com', password = PASSWORD) => {
 const authed = (method, path, token) =>
   request(app)[method](path).set('Authorization', `Bearer ${token}`);
 
-const enableTwoFactor = async (token) => {
-  const setup = await authed('post', '/api/auth/2fa/setup', token);
-  expect(setup.status).toBe(200);
-  const secret = setup.body.manualEntryKey;
-
-  const verify = await authed('post', '/api/auth/2fa/verify', token).send({ code: totp(secret) });
-  expect(verify.status).toBe(200);
-  return secret;
-};
-
 const googlePayload = (overrides = {}) => ({
   sub: 'google-sub-123',
   email: 'jane@gmail.com',
   email_verified: true,
+  name: 'Jane Doe',
   given_name: 'Jane',
   family_name: 'Doe',
   ...overrides
@@ -98,18 +70,82 @@ describe('email/password auth', () => {
     expect(res.status).toBe(400);
   });
 
-  it('never exposes secrets in the session payload', async () => {
+  it('rejects an invalid email address on sign-up', async () => {
+    const res = await request(app)
+      .post('/api/auth/signup')
+      .send({ name: NAME, email: 'not-an-email', password: PASSWORD });
+
+    expect(res.status).toBe(400);
+    expect(await User.countDocuments()).toBe(0);
+  });
+
+  it('rejects passwords longer than bcrypt can hash', async () => {
+    const res = await request(app)
+      .post('/api/auth/signup')
+      .send({ name: NAME, email: 'user@example.com', password: 'a'.repeat(73) });
+
+    expect(res.status).toBe(400);
+    expect(await User.countDocuments()).toBe(0);
+  });
+
+  it('returns a clean error when two sign-ups for one email race', async () => {
+    const attempt = () => request(app)
+      .post('/api/auth/signup')
+      .send({ name: NAME, email: 'race@example.com', password: PASSWORD });
+
+    const statuses = (await Promise.all([attempt(), attempt()])).map((res) => res.status).sort();
+
+    expect(statuses).toEqual([201, 400]);
+    expect(await User.countDocuments()).toBe(1);
+  });
+
+  it('stores only a bcrypt hash of the password', async () => {
+    await signUp();
+
+    const user = await User.findOne({ email: 'user@example.com' });
+
+    expect(user.password).not.toBe(PASSWORD);
+    expect(user.password).toMatch(/^\$2[aby]\$12\$/);
+  });
+
+  it('requires a name on sign-up', async () => {
+    for (const name of [undefined, '', '   ', 'x'.repeat(101), { $ne: null }]) {
+      const res = await request(app)
+        .post('/api/auth/signup')
+        .send({ name, email: 'user@example.com', password: PASSWORD });
+      expect(res.status, JSON.stringify(name)).toBe(400);
+    }
+    expect(await User.countDocuments()).toBe(0);
+  });
+
+  it('stores the name, trimmed and with single spaces', async () => {
+    const res = await request(app)
+      .post('/api/auth/signup')
+      .send({ name: '  Ada   Lovelace ', email: 'user@example.com', password: PASSWORD });
+
+    expect(res.body.user.name).toBe('Ada Lovelace');
+    expect((await User.findOne({ email: 'user@example.com' })).name).toBe('Ada Lovelace');
+  });
+
+  it('never exposes the password hash or token version in the session payload', async () => {
     const token = await signUp();
-    await enableTwoFactor(token);
 
     const res = await authed('get', '/api/auth/session', token);
 
     expect(res.status).toBe(200);
     const user = res.body.session.user;
     expect(user.password).toBeUndefined();
-    expect(user.twoFactorSecret).toBeUndefined();
-    expect(user.twoFactorTempSecret).toBeUndefined();
+    expect(user.tokenVersion).toBeUndefined();
     expect(user.hasPassword).toBe(true);
+  });
+
+  it('does not accept a token signed with a different secret', async () => {
+    const user = await User.create({ email: 'user@example.com', password: PASSWORD });
+    const forged = jwt.sign({ userId: user._id, tokenVersion: 0 }, 'not-the-secret');
+
+    const res = await authed('get', '/api/auth/session', forged);
+
+    expect(res.status).toBe(401);
   });
 });
 
@@ -131,6 +167,14 @@ describe('Google sign-in', () => {
     expect(await User.countDocuments()).toBe(0);
   });
 
+  it('falls back to given and family name when Google sends no full name', async () => {
+    verifyGoogleIdToken.mockResolvedValue(googlePayload({ name: undefined }));
+
+    const res = await googleSignIn();
+
+    expect(res.body.user.name).toBe('Jane Doe');
+  });
+
   it('rejects a Google account whose email is not verified', async () => {
     verifyGoogleIdToken.mockResolvedValue(googlePayload({ email_verified: false }));
 
@@ -149,8 +193,7 @@ describe('Google sign-in', () => {
     expect(res.body.token).toBeTruthy();
     expect(res.body.user).toMatchObject({
       email: 'jane@gmail.com',
-      firstName: 'Jane',
-      lastName: 'Doe',
+      name: 'Jane Doe',
       isEmailVerified: true,
       hasPassword: false
     });
@@ -189,93 +232,16 @@ describe('Google sign-in', () => {
     expect(res.status).toBe(409);
     expect(await User.countDocuments()).toBe(1);
   });
-});
 
-describe('two-factor authentication', () => {
-  it('does not enable 2FA with a wrong code', async () => {
-    const token = await signUp();
-    const setup = await authed('post', '/api/auth/2fa/setup', token);
+  it('does not let a Google-only account sign in with a password', async () => {
+    verifyGoogleIdToken.mockResolvedValue(googlePayload());
+    await googleSignIn();
 
-    const res = await authed('post', '/api/auth/2fa/verify', token)
-      .send({ code: staleTotp(setup.body.manualEntryKey) });
-
-    expect(res.status).toBe(400);
-    expect((await User.findOne()).twoFactorEnabled).toBe(false);
-  });
-
-  it('ignores a secret supplied by the client when verifying', async () => {
-    const token = await signUp();
-    await authed('post', '/api/auth/2fa/setup', token);
-    const attackerSecret = speakeasy.generateSecret().base32;
-    const attackerCode = totp(attackerSecret);
-
-    // `token` is the field name the previous API read the code from
-    const res = await authed('post', '/api/auth/2fa/verify', token)
-      .send({ code: attackerCode, token: attackerCode, secret: attackerSecret });
-
-    expect(res.status).toBe(400);
-  });
-
-  it('requires the code before issuing a session on password sign-in', async () => {
-    const token = await signUp();
-    const secret = await enableTwoFactor(token);
-
-    const signIn = await request(app)
+    const res = await request(app)
       .post('/api/auth/signin')
-      .send({ email: 'user@example.com', password: PASSWORD });
-
-    expect(signIn.status).toBe(200);
-    expect(signIn.body.twoFactorRequired).toBe(true);
-    expect(signIn.body.token).toBeUndefined();
-
-    const wrong = await request(app)
-      .post('/api/auth/2fa/login')
-      .send({ twoFactorToken: signIn.body.twoFactorToken, code: staleTotp(secret) });
-    expect(wrong.status).toBe(401);
-
-    const right = await request(app)
-      .post('/api/auth/2fa/login')
-      .send({ twoFactorToken: signIn.body.twoFactorToken, code: totp(secret) });
-    expect(right.status).toBe(200);
-
-    const session = await authed('get', '/api/auth/session', right.body.token);
-    expect(session.status).toBe(200);
-  });
-
-  it('does not accept the pending 2FA token as a session token', async () => {
-    const token = await signUp();
-    await enableTwoFactor(token);
-    const signIn = await request(app)
-      .post('/api/auth/signin')
-      .send({ email: 'user@example.com', password: PASSWORD });
-
-    const res = await authed('get', '/api/auth/session', signIn.body.twoFactorToken);
+      .send({ email: 'jane@gmail.com', password: 'anything' });
 
     expect(res.status).toBe(401);
-  });
-
-  it('requires the code on Google sign-in too', async () => {
-    verifyGoogleIdToken.mockResolvedValue(googlePayload());
-    const first = await googleSignIn();
-    await enableTwoFactor(first.body.token);
-
-    const res = await googleSignIn();
-
-    expect(res.body.twoFactorRequired).toBe(true);
-    expect(res.body.token).toBeUndefined();
-  });
-
-  it('only disables 2FA with a valid code', async () => {
-    const token = await signUp();
-    const secret = await enableTwoFactor(token);
-
-    const withoutCode = await authed('post', '/api/auth/2fa/disable', token).send({});
-    expect(withoutCode.status).toBe(400);
-    expect((await User.findOne()).twoFactorEnabled).toBe(true);
-
-    const withCode = await authed('post', '/api/auth/2fa/disable', token).send({ code: totp(secret) });
-    expect(withCode.status).toBe(200);
-    expect((await User.findOne()).twoFactorEnabled).toBe(false);
   });
 });
 
@@ -308,6 +274,42 @@ describe('password change', () => {
       .post('/api/auth/signin')
       .send({ email: 'user@example.com', password: 'newpass123' });
     expect(signIn.status).toBe(200);
+  });
+
+  it('signs out other sessions and returns a working token to the caller', async () => {
+    const token = await signUp();
+    const otherDevice = (await request(app)
+      .post('/api/auth/signin')
+      .send({ email: 'user@example.com', password: PASSWORD })).body.token;
+
+    const res = await authed('put', '/api/auth/user', token)
+      .send({ password: 'newpass123', currentPassword: PASSWORD });
+
+    expect(res.body.token).toBeTruthy();
+    expect((await authed('get', '/api/auth/session', res.body.token)).status).toBe(200);
+    expect((await authed('get', '/api/auth/session', token)).status).toBe(401);
+    expect((await authed('get', '/api/auth/session', otherDevice)).status).toBe(401);
+  });
+
+  it('keeps sessions and returns no token when only the name changes', async () => {
+    const token = await signUp();
+
+    const res = await authed('put', '/api/auth/user', token).send({ name: 'Ada King' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.token).toBeUndefined();
+    expect((await authed('get', '/api/auth/session', token)).status).toBe(200);
+  });
+
+  it('updates the name and rejects a blank one', async () => {
+    const token = await signUp();
+
+    const blank = await authed('put', '/api/auth/user', token).send({ name: '  ' });
+    expect(blank.status).toBe(400);
+
+    const res = await authed('put', '/api/auth/user', token).send({ name: 'Ada King' });
+    expect(res.status).toBe(200);
+    expect(res.body.user.name).toBe('Ada King');
   });
 
   it('lets a Google-only user set a first password without a current one', async () => {
@@ -363,16 +365,57 @@ describe('account deletion', () => {
     expect(session.status).toBe(401);
   });
 
-  it('asks a Google-only user with 2FA for a code', async () => {
+  it('lets a Google-only user delete their account', async () => {
     verifyGoogleIdToken.mockResolvedValue(googlePayload());
     const google = await googleSignIn();
-    const secret = await enableTwoFactor(google.body.token);
 
-    const withoutCode = await authed('delete', '/api/auth/user', google.body.token).send({});
-    expect(withoutCode.status).toBe(400);
+    const res = await authed('delete', '/api/auth/user', google.body.token).send({});
 
-    const withCode = await authed('delete', '/api/auth/user', google.body.token).send({ code: totp(secret) });
-    expect(withCode.status).toBe(200);
+    expect(res.status).toBe(200);
     expect(await User.countDocuments()).toBe(0);
+  });
+});
+
+describe('documents written by older versions', () => {
+  it('shows a name built from the old first and last name fields', async () => {
+    const token = await signUp();
+    await User.collection.updateOne(
+      { email: 'user@example.com' },
+      { $unset: { name: '' }, $set: { firstName: 'Grace', lastName: 'Hopper' } }
+    );
+
+    const res = await authed('get', '/api/auth/session', token);
+
+    expect(res.body.session.user.name).toBe('Grace Hopper');
+    expect(res.body.session.user.firstName).toBeUndefined();
+  });
+});
+
+describe('removed two-factor authentication', () => {
+  it('no longer exposes 2FA endpoints', async () => {
+    const token = await signUp();
+
+    for (const path of ['/api/auth/2fa/setup', '/api/auth/2fa/verify', '/api/auth/2fa/disable', '/api/auth/2fa/login']) {
+      const res = await authed('post', path, token).send({});
+      expect(res.status, path).toBe(404);
+    }
+  });
+
+  it('signs in accounts that had 2FA enabled before it was removed', async () => {
+    await signUp();
+    // Simulate a document written while 2FA existed
+    await User.collection.updateOne(
+      { email: 'user@example.com' },
+      { $set: { twoFactorEnabled: true, twoFactorSecret: 'LEGACYSECRET' } }
+    );
+
+    const res = await request(app)
+      .post('/api/auth/signin')
+      .send({ email: 'user@example.com', password: PASSWORD });
+
+    expect(res.status).toBe(200);
+    expect(res.body.token).toBeTruthy();
+    expect(res.body.user.twoFactorSecret).toBeUndefined();
+    expect(res.body.user.twoFactorEnabled).toBeUndefined();
   });
 });

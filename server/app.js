@@ -11,6 +11,13 @@ import mlRoutes from './routes/ml.js';
 
 const app = express();
 
+// Behind a hosting proxy (e.g. Render), set TRUST_PROXY to the number of proxy hops
+// so rate limits key on the real client IP instead of the proxy's
+const trustProxyHops = Number(process.env.TRUST_PROXY);
+if (Number.isInteger(trustProxyHops) && trustProxyHops > 0) {
+  app.set('trust proxy', trustProxyHops);
+}
+
 // Security middleware
 app.use(helmet());
 

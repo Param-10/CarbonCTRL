@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './store/authStore';
 import { useCarbonStore } from './store/carbonStore';
 import { useCompanyStore } from './store/companyStore';
@@ -63,7 +63,7 @@ function App() {
   }
 
   return (
-    <Router>
+    <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <AppWithPersistence>
         <Routes>
           <Route path="/" element={<LandingPage />} />
@@ -107,9 +107,11 @@ function App() {
                 <ProtectedRoute requireCompanyProfile={true}>
                   <OffsetProjectsPage />
                 </ProtectedRoute>
-              } 
+              }
             />
           </Route>
+          {/* Unknown URLs go home instead of rendering a blank page */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AppWithPersistence>
     </Router>

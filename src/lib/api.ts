@@ -11,6 +11,7 @@ export class ApiError extends Error {
 class ApiClient {
   private baseURL: string;
   private token: string | null = null;
+  private unauthorizedHandler: (() => void) | null = null;
 
   constructor() {
     this.baseURL = import.meta.env.VITE_API_URL || 'https://carbonctrl.onrender.com/api';
@@ -31,23 +32,37 @@ class ApiClient {
     return this.token;
   }
 
+  // Called when a request made with a session token is rejected (expired, revoked or deleted user)
+  setUnauthorizedHandler(handler: (() => void) | null) {
+    this.unauthorizedHandler = handler;
+  }
+
   private async request(endpoint: string, options: RequestInit = {}) {
     const url = `${this.baseURL}${endpoint}`;
-    
+    const sentToken = this.token;
+
+    // Spread options first so the merged headers below are not overwritten by options.headers
     const config: RequestInit = {
+      ...options,
       headers: {
         'Content-Type': 'application/json',
-        ...(this.token && { Authorization: `Bearer ${this.token}` }),
+        ...(sentToken && { Authorization: `Bearer ${sentToken}` }),
         ...options.headers,
       },
-      ...options,
     };
 
     try {
       const response = await fetch(url, config);
-      
+
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+
+        // Only react if the rejected token is still the current one (not replaced meanwhile)
+        if (response.status === 401 && sentToken && sentToken === this.token) {
+          this.setToken(null);
+          this.unauthorizedHandler?.();
+        }
+
         throw new ApiError(errorData.error || `HTTP ${response.status}`, response.status);
       }
 
@@ -59,10 +74,10 @@ class ApiClient {
   }
 
   // Auth methods
-  async signUp(email: string, password: string, firstName?: string, lastName?: string) {
+  async signUp(name: string, email: string, password: string) {
     const response = await this.request('/auth/signup', {
       method: 'POST',
-      body: JSON.stringify({ email, password, firstName, lastName }),
+      body: JSON.stringify({ name, email, password }),
     });
     
     if (response.token) {
@@ -85,9 +100,12 @@ class ApiClient {
     return response;
   }
 
+  // Best effort: the session is cleared locally even if the server call fails (e.g. expired token)
   async signOut() {
     try {
       await this.request('/auth/signout', { method: 'POST' });
+    } catch (error) {
+      console.warn('Sign-out request failed; clearing the local session anyway:', error);
     } finally {
       this.setToken(null);
     }
@@ -110,14 +128,21 @@ class ApiClient {
     }
   }
 
-  async updateUser(data: { firstName?: string; lastName?: string; password?: string; currentPassword?: string }) {
-    return this.request('/auth/user', {
+  async updateUser(data: { name?: string; password?: string; currentPassword?: string }) {
+    const response = await this.request('/auth/user', {
       method: 'PUT',
       body: JSON.stringify(data),
     });
+
+    // A password change signs out other sessions and returns a fresh token for this one
+    if (response.token) {
+      this.setToken(response.token);
+    }
+
+    return response;
   }
 
-  async deleteAccount(confirmation: { password?: string; code?: string }) {
+  async deleteAccount(confirmation: { password?: string }) {
     const response = await this.request('/auth/user', {
       method: 'DELETE',
       body: JSON.stringify(confirmation),
@@ -139,49 +164,10 @@ class ApiClient {
     return response;
   }
 
-  async completeTwoFactorLogin(twoFactorToken: string, code: string) {
-    const response = await this.request('/auth/2fa/login', {
-      method: 'POST',
-      body: JSON.stringify({ twoFactorToken, code }),
-    });
-
-    if (response.token) {
-      this.setToken(response.token);
-    }
-
-    return response;
-  }
-
-  async setup2FA() {
-    return this.request('/auth/2fa/setup', {
-      method: 'POST',
-    });
-  }
-
-  async verify2FA(code: string) {
-    return this.request('/auth/2fa/verify', {
-      method: 'POST',
-      body: JSON.stringify({ code }),
-    });
-  }
-
-  async disable2FA(code: string) {
-    return this.request('/auth/2fa/disable', {
-      method: 'POST',
-      body: JSON.stringify({ code }),
-    });
-  }
-
   // Company Profile methods
+  // Resolves to null when the user has not created a profile yet
   async getCompanyProfile() {
-    try {
-      return await this.request('/company/profile');
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('404')) {
-        return null;
-      }
-      throw error;
-    }
+    return this.request('/company/profile');
   }
 
   async updateCompanyProfile(profileData: unknown) {

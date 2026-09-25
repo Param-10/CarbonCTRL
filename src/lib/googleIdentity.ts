@@ -32,6 +32,24 @@ declare global {
 const GOOGLE_IDENTITY_SCRIPT_URL = 'https://accounts.google.com/gsi/client';
 
 let scriptPromise: Promise<void> | null = null;
+let initializedClientId: string | null = null;
+let credentialHandler: ((credential: string) => void) | null = null;
+
+/**
+ * Google warns if initialize() runs more than once per page, so initialize once and
+ * route credentials to whichever handler the currently mounted page registered.
+ */
+export function initializeGoogleSignIn(clientId: string, onCredential: (credential: string) => void) {
+  credentialHandler = onCredential;
+
+  if (initializedClientId === clientId || !window.google) return;
+
+  window.google.accounts.id.initialize({
+    client_id: clientId,
+    callback: ({ credential }) => credentialHandler?.(credential),
+  });
+  initializedClientId = clientId;
+}
 
 export function loadGoogleIdentityScript(): Promise<void> {
   if (window.google?.accounts?.id) {

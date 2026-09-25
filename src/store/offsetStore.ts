@@ -118,12 +118,20 @@ interface OffsetState {
   loading: boolean;
   error: string | null;
   fetchOffsetProjects: () => Promise<void>;
+  reset: () => void;
 }
 
-export const useOffsetStore = create<OffsetState>((set) => ({
+const initialState = {
   projects: [],
   loading: false,
   error: null,
+};
+
+export const useOffsetStore = create<OffsetState>((set) => ({
+  ...initialState,
+
+  // Clears the signed-in user's offset projects, e.g. on sign-out
+  reset: () => set(initialState),
 
   fetchOffsetProjects: async () => {
     const { carbonScore } = useCarbonStore.getState();
