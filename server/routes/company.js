@@ -7,11 +7,8 @@ const router = express.Router();
 // Get company profile
 router.get('/profile', auth, async (req, res) => {
   try {
+    // New users have no profile yet; that is a normal state, not an error
     const profile = await CompanyProfile.findOne({ userId: req.userId });
-    
-    if (!profile) {
-      return res.status(404).json({ error: 'No company profile found' });
-    }
 
     res.json(profile);
   } catch (error) {

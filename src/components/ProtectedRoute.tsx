@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useCompanyStore } from '../store/companyStore';
@@ -9,8 +9,9 @@ interface ProtectedRouteProps {
 }
 
 const ProtectedRoute = ({ children, requireCompanyProfile = false }: ProtectedRouteProps) => {
-  const { user } = useAuthStore();
-  const { profile, loading, fetchProfile } = useCompanyStore();
+  const { user, sessionCheckFailed, initializeAuth } = useAuthStore();
+  const [retrying, setRetrying] = useState(false);
+  const { profile, loaded, error, fetchProfile } = useCompanyStore();
   const location = useLocation();
 
   useEffect(() => {
@@ -18,6 +19,30 @@ const ProtectedRoute = ({ children, requireCompanyProfile = false }: ProtectedRo
       fetchProfile();
     }
   }, [user, fetchProfile]);
+
+  const retrySessionCheck = async () => {
+    setRetrying(true);
+    await initializeAuth();
+    setRetrying(false);
+  };
+
+  // A saved session that could not be checked is not a signed-out user; let them retry instead
+  if (!user && sessionCheckFailed) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <p className="font-mono text-red-300 text-sm mb-4">Could not reach the server to restore your session.</p>
+          <button
+            onClick={retrySessionCheck}
+            disabled={retrying}
+            className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-mono text-sm py-2 px-4 rounded-lg transition-colors disabled:opacity-50"
+          >
+            {retrying ? 'Retrying...' : 'Try Again'}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // If user is not authenticated, redirect to auth
   if (!user) {
@@ -30,9 +55,25 @@ const ProtectedRoute = ({ children, requireCompanyProfile = false }: ProtectedRo
     if (location.pathname === '/company-profile') {
       return <>{children}</>;
     }
-    
-    // Wait for profile loading to complete before making redirect decision
-    if (loading) {
+
+    if (error && !loaded) {
+      return (
+        <div className="min-h-screen flex items-center justify-center">
+          <div className="text-center">
+            <p className="font-mono text-red-300 text-sm mb-4">Could not load your company profile.</p>
+            <button
+              onClick={() => fetchProfile()}
+              className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-mono text-sm py-2 px-4 rounded-lg transition-colors"
+            >
+              Try Again
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // Wait until the profile has been fetched before deciding whether to redirect
+    if (!loaded) {
       return (
         <div className="min-h-screen bg-gradient-to-b from-gray-800 via-emerald-900 to-gray-800 flex items-center justify-center">
           <div className="text-center">
@@ -42,9 +83,8 @@ const ProtectedRoute = ({ children, requireCompanyProfile = false }: ProtectedRo
         </div>
       );
     }
-    
-    // Only redirect if profile loading is done and no profile exists
-    if (!loading && (!profile || !profile.name)) {
+
+    if (!profile || !profile.name) {
       return <Navigate to="/company-profile" replace />;
     }
   }
@@ -52,4 +92,4 @@ const ProtectedRoute = ({ children, requireCompanyProfile = false }: ProtectedRo
   return <>{children}</>;
 };
 
-export default ProtectedRoute; 
+export default ProtectedRoute;

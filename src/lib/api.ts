@@ -1,6 +1,26 @@
+export class ApiError extends Error {
+  status: number;
+  // Machine-readable reason sent by the server for errors the client handles specially
+  code?: string;
+
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+// Confirms linking Google to an existing email/password account: its password, or consent to remove it
+export interface GoogleLinkOptions {
+  password?: string;
+  discardPassword?: boolean;
+}
+
 class ApiClient {
   private baseURL: string;
   private token: string | null = null;
+  private unauthorizedHandler: (() => void) | null = null;
 
   constructor() {
     this.baseURL = import.meta.env.VITE_API_URL || 'https://carbonctrl.onrender.com/api';
@@ -21,24 +41,38 @@ class ApiClient {
     return this.token;
   }
 
+  // Called when a request made with a session token is rejected (expired, revoked or deleted user)
+  setUnauthorizedHandler(handler: (() => void) | null) {
+    this.unauthorizedHandler = handler;
+  }
+
   private async request(endpoint: string, options: RequestInit = {}) {
     const url = `${this.baseURL}${endpoint}`;
-    
+    const sentToken = this.token;
+
+    // Spread options first so the merged headers below are not overwritten by options.headers
     const config: RequestInit = {
+      ...options,
       headers: {
         'Content-Type': 'application/json',
-        ...(this.token && { Authorization: `Bearer ${this.token}` }),
+        ...(sentToken && { Authorization: `Bearer ${sentToken}` }),
         ...options.headers,
       },
-      ...options,
     };
 
     try {
       const response = await fetch(url, config);
-      
+
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-        throw new Error(errorData.error || `HTTP ${response.status}`);
+
+        // Only react if the rejected token is still the current one (not replaced meanwhile)
+        if (response.status === 401 && sentToken && sentToken === this.token) {
+          this.setToken(null);
+          this.unauthorizedHandler?.();
+        }
+
+        throw new ApiError(errorData.error || `HTTP ${response.status}`, response.status, errorData.code);
       }
 
       return response.json();
@@ -49,10 +83,10 @@ class ApiClient {
   }
 
   // Auth methods
-  async signUp(email: string, password: string, firstName?: string, lastName?: string) {
+  async signUp(name: string, email: string, password: string) {
     const response = await this.request('/auth/signup', {
       method: 'POST',
-      body: JSON.stringify({ email, password, firstName, lastName }),
+      body: JSON.stringify({ name, email, password }),
     });
     
     if (response.token) {
@@ -75,9 +109,12 @@ class ApiClient {
     return response;
   }
 
+  // Best effort: the session is cleared locally even if the server call fails (e.g. expired token)
   async signOut() {
     try {
       await this.request('/auth/signout', { method: 'POST' });
+    } catch (error) {
+      console.warn('Sign-out request failed; clearing the local session anyway:', error);
     } finally {
       this.setToken(null);
     }
@@ -90,62 +127,56 @@ class ApiClient {
     
     try {
       return await this.request('/auth/session');
-    } catch {
-      // If token is invalid, clear it
-      this.setToken(null);
-      return { session: null };
-    }
-  }
-
-  async updateUser(data: { firstName?: string; lastName?: string; password?: string }) {
-    return this.request('/auth/user', {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async googleAuth(googleToken: string, email: string, name: string) {
-    const response = await this.request('/auth/google', {
-      method: 'POST',
-      body: JSON.stringify({ googleToken, email, name }),
-    });
-    
-    if (response.token) {
-      this.setToken(response.token);
-    }
-    
-    return response;
-  }
-
-  async setup2FA() {
-    return this.request('/auth/2fa/setup', {
-      method: 'POST',
-    });
-  }
-
-  async verify2FA(token: string, secret: string) {
-    return this.request('/auth/2fa/verify', {
-      method: 'POST',
-      body: JSON.stringify({ token, secret }),
-    });
-  }
-
-  async disable2FA() {
-    return this.request('/auth/2fa/disable', {
-      method: 'POST',
-    });
-  }
-
-  // Company Profile methods
-  async getCompanyProfile() {
-    try {
-      return await this.request('/company/profile');
     } catch (error) {
-      if (error instanceof Error && error.message.includes('404')) {
-        return null;
+      // Only an auth failure means the token is bad; keep it through network errors
+      if (error instanceof ApiError && error.status === 401) {
+        this.setToken(null);
+        return { session: null };
       }
       throw error;
     }
+  }
+
+  async updateUser(data: { name?: string; password?: string; currentPassword?: string }) {
+    const response = await this.request('/auth/user', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+
+    // A password change signs out other sessions and returns a fresh token for this one
+    if (response.token) {
+      this.setToken(response.token);
+    }
+
+    return response;
+  }
+
+  async deleteAccount(confirmation: { password?: string }) {
+    const response = await this.request('/auth/user', {
+      method: 'DELETE',
+      body: JSON.stringify(confirmation),
+    });
+    this.setToken(null);
+    return response;
+  }
+
+  async googleAuth(credential: string, link: GoogleLinkOptions = {}) {
+    const response = await this.request('/auth/google', {
+      method: 'POST',
+      body: JSON.stringify({ credential, ...link }),
+    });
+
+    if (response.token) {
+      this.setToken(response.token);
+    }
+
+    return response;
+  }
+
+  // Company Profile methods
+  // Resolves to null when the user has not created a profile yet
+  async getCompanyProfile() {
+    return this.request('/company/profile');
   }
 
   async updateCompanyProfile(profileData: unknown) {

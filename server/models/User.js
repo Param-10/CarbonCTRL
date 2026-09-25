@@ -16,13 +16,10 @@ const userSchema = new mongoose.Schema({
     },
     minlength: 6
   },
-  firstName: {
+  name: {
     type: String,
-    trim: true
-  },
-  lastName: {
-    type: String,
-    trim: true
+    trim: true,
+    maxlength: 100
   },
   isEmailVerified: {
     type: Boolean,
@@ -34,14 +31,13 @@ const userSchema = new mongoose.Schema({
   lastLogin: Date,
   googleId: {
     type: String,
+    unique: true,
     sparse: true
   },
-  twoFactorSecret: {
-    type: String
-  },
-  twoFactorEnabled: {
-    type: Boolean,
-    default: false
+  // Embedded in session tokens; incrementing it signs out every existing session
+  tokenVersion: {
+    type: Number,
+    default: 0
   }
 }, {
   timestamps: true
@@ -49,7 +45,8 @@ const userSchema = new mongoose.Schema({
 
 // Hash password before saving
 userSchema.pre('save', async function(next) {
-  if (!this.isModified('password')) return next();
+  // Nothing to hash when the password was removed (e.g. an unverified one cleared on Google link)
+  if (!this.isModified('password') || !this.password) return next();
   
   try {
     const salt = await bcrypt.genSalt(12);
@@ -65,14 +62,24 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
   return bcrypt.compare(candidatePassword, this.password);
 };
 
-// Transform toJSON to remove sensitive data
+// Only these fields are sent to clients. An allowlist (rather than deleting known secrets)
+// keeps fields left in older documents, e.g. the removed 2FA secrets, from ever leaking.
 userSchema.methods.toJSON = function() {
-  const user = this.toObject();
-  delete user.password;
-  delete user.resetPasswordToken;
-  delete user.resetPasswordExpires;
-  delete user.emailVerificationToken;
-  return user;
+  const stored = this.toObject();
+  // Documents created before the single name field stored firstName/lastName
+  const legacyName = [stored.firstName, stored.lastName].filter(Boolean).join(' ');
+
+  return {
+    _id: stored._id,
+    email: stored.email,
+    name: stored.name || legacyName || undefined,
+    isEmailVerified: stored.isEmailVerified,
+    // Lets the client know whether a current password is required (Google-only users have none)
+    hasPassword: Boolean(stored.password),
+    lastLogin: stored.lastLogin,
+    createdAt: stored.createdAt,
+    updatedAt: stored.updatedAt
+  };
 };
 
 export default mongoose.model('User', userSchema); 
