@@ -36,15 +36,20 @@ def main():
     try:
         # Get input data from command line argument
         if len(sys.argv) < 2:
-            print(json.dumps({"error": "No company data provided"}))
-            return
+            print(json.dumps({"error": "No company data provided"}), file=sys.stderr)
+            sys.exit(1)
         
         company_data = json.loads(sys.argv[1])
         result = get_recommendations(company_data)
+        if "error" in result:
+            print(json.dumps(result), file=sys.stderr)
+            sys.exit(1)
         print(json.dumps(result))
+        sys.exit(0)
         
     except Exception as e:
-        print(json.dumps({"error": f"Script error: {str(e)}"}))
+        print(json.dumps({"error": f"Script error: {str(e)}"}), file=sys.stderr)
+        sys.exit(1)
 
 if __name__ == "__main__":
     main() 

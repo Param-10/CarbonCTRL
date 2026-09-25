@@ -34,11 +34,20 @@ const runPythonScript = (scriptPath, args = []) => {
     
     python.on('close', (code) => {
       if (code !== 0) {
-        reject(new Error(`Python script failed: ${errorString}`));
+        let errMsg = errorString.trim() || dataString.trim() || `Process exited with code ${code}`;
+        try {
+          const parsed = JSON.parse(errMsg);
+          if (parsed.error) errMsg = parsed.error;
+        } catch (_) {}
+        reject(new Error(`Python script failed: ${errMsg}`));
       } else {
         try {
           const result = JSON.parse(dataString);
-          resolve(result);
+          if (result && result.error) {
+            reject(new Error(`Python script reported error: ${result.error}`));
+          } else {
+            resolve(result);
+          }
         } catch (e) {
           resolve({ output: dataString });
         }
@@ -109,11 +118,18 @@ router.get('/predictions', auth, async (req, res) => {
     const mlScriptPath = path.join(__dirname, '../../ml/predict.py');
     const predictions = await runPythonScript(mlScriptPath, [JSON.stringify(mlData)]);
     
+    if (!predictions || !Array.isArray(predictions.predictions) || predictions.predictions.length === 0) {
+      return res.status(500).json({
+        success: false,
+        msg: 'Prediction model failed to produce forecasts',
+        error: predictions?.error || 'Empty or invalid prediction output from model'
+      });
+    }
+
     res.json({
       success: true,
       predictions: predictions.predictions,
       dates: predictions.prediction_dates,
-      confidence: predictions.confidence || 0.85,
       message: 'Carbon footprint predictions generated successfully'
     });
     

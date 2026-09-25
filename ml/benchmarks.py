@@ -36,15 +36,20 @@ def main():
     try:
         # Get industry from command line argument
         if len(sys.argv) < 2:
-            print(json.dumps({"error": "No industry provided"}))
-            return
+            print(json.dumps({"error": "No industry provided"}), file=sys.stderr)
+            sys.exit(1)
         
         industry = sys.argv[1]
         result = get_benchmarks(industry)
+        if "error" in result:
+            print(json.dumps(result), file=sys.stderr)
+            sys.exit(1)
         print(json.dumps(result))
+        sys.exit(0)
         
     except Exception as e:
-        print(json.dumps({"error": f"Script error: {str(e)}"}))
+        print(json.dumps({"error": f"Script error: {str(e)}"}), file=sys.stderr)
+        sys.exit(1)
 
 if __name__ == "__main__":
     main() 

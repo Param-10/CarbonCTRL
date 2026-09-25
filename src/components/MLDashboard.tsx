@@ -230,8 +230,7 @@ const MLDashboard: React.FC<MLDashboardProps> = ({ companyData }) => {
     
     return predictions.dates.map((date: string, index: number) => ({
       date: new Date(date).toLocaleDateString(),
-      prediction: predictions.predictions?.[index] || 0,
-      confidence: predictions.confidence || 0.85
+      prediction: predictions.predictions?.[index] || 0
     }));
   };
 
@@ -318,7 +317,7 @@ const MLDashboard: React.FC<MLDashboardProps> = ({ companyData }) => {
                 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="bg-blue-50 p-4 rounded-lg">
-                    <h3 className="font-semibold text-blue-900">Average Prediction</h3>
+                    <h3 className="font-semibold text-blue-900">Average Daily Emissions</h3>
                     <p className="text-2xl font-bold text-blue-600">
                       {predictions.predictions ? 
                         (predictions.predictions.reduce((a: number, b: number) => a + b, 0) / predictions.predictions.length).toFixed(1) 
@@ -326,13 +325,15 @@ const MLDashboard: React.FC<MLDashboardProps> = ({ companyData }) => {
                     </p>
                   </div>
                   <div className="bg-green-50 p-4 rounded-lg">
-                    <h3 className="font-semibold text-green-900">Model Confidence</h3>
+                    <h3 className="font-semibold text-green-900">Total 7-Day Forecast</h3>
                     <p className="text-2xl font-bold text-green-600">
-                      {((predictions.confidence || 0.85) * 100).toFixed(1)}%
+                      {predictions.predictions ? 
+                        predictions.predictions.reduce((a: number, b: number) => a + b, 0).toFixed(1)
+                        : '0'} kg CO2
                     </p>
                   </div>
                   <div className="bg-purple-50 p-4 rounded-lg">
-                    <h3 className="font-semibold text-purple-900">Prediction Range</h3>
+                    <h3 className="font-semibold text-purple-900">Forecast Horizon</h3>
                     <p className="text-2xl font-bold text-purple-600">7 days</p>
                   </div>
                 </div>
