@@ -34,10 +34,18 @@ const userSchema = new mongoose.Schema({
   lastLogin: Date,
   googleId: {
     type: String,
+    unique: true,
     sparse: true
   },
+  // Secrets are excluded from queries by default; load them with .select('+field')
   twoFactorSecret: {
-    type: String
+    type: String,
+    select: false
+  },
+  // Holds the secret between 2FA setup and verification, before 2FA is enabled
+  twoFactorTempSecret: {
+    type: String,
+    select: false
   },
   twoFactorEnabled: {
     type: Boolean,
@@ -68,10 +76,14 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
 // Transform toJSON to remove sensitive data
 userSchema.methods.toJSON = function() {
   const user = this.toObject();
+  // Lets the client know whether a current password is required (Google-only users have none)
+  user.hasPassword = Boolean(this.password);
   delete user.password;
   delete user.resetPasswordToken;
   delete user.resetPasswordExpires;
   delete user.emailVerificationToken;
+  delete user.twoFactorSecret;
+  delete user.twoFactorTempSecret;
   return user;
 };
 

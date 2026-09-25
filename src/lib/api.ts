@@ -1,3 +1,13 @@
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 class ApiClient {
   private baseURL: string;
   private token: string | null = null;
@@ -38,7 +48,7 @@ class ApiClient {
       
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-        throw new Error(errorData.error || `HTTP ${response.status}`);
+        throw new ApiError(errorData.error || `HTTP ${response.status}`, response.status);
       }
 
       return response.json();
@@ -90,30 +100,55 @@ class ApiClient {
     
     try {
       return await this.request('/auth/session');
-    } catch {
-      // If token is invalid, clear it
-      this.setToken(null);
-      return { session: null };
+    } catch (error) {
+      // Only an auth failure means the token is bad; keep it through network errors
+      if (error instanceof ApiError && error.status === 401) {
+        this.setToken(null);
+        return { session: null };
+      }
+      throw error;
     }
   }
 
-  async updateUser(data: { firstName?: string; lastName?: string; password?: string }) {
+  async updateUser(data: { firstName?: string; lastName?: string; password?: string; currentPassword?: string }) {
     return this.request('/auth/user', {
       method: 'PUT',
       body: JSON.stringify(data),
     });
   }
 
-  async googleAuth(googleToken: string, email: string, name: string) {
+  async deleteAccount(confirmation: { password?: string; code?: string }) {
+    const response = await this.request('/auth/user', {
+      method: 'DELETE',
+      body: JSON.stringify(confirmation),
+    });
+    this.setToken(null);
+    return response;
+  }
+
+  async googleAuth(credential: string) {
     const response = await this.request('/auth/google', {
       method: 'POST',
-      body: JSON.stringify({ googleToken, email, name }),
+      body: JSON.stringify({ credential }),
     });
-    
+
     if (response.token) {
       this.setToken(response.token);
     }
-    
+
+    return response;
+  }
+
+  async completeTwoFactorLogin(twoFactorToken: string, code: string) {
+    const response = await this.request('/auth/2fa/login', {
+      method: 'POST',
+      body: JSON.stringify({ twoFactorToken, code }),
+    });
+
+    if (response.token) {
+      this.setToken(response.token);
+    }
+
     return response;
   }
 
@@ -123,16 +158,17 @@ class ApiClient {
     });
   }
 
-  async verify2FA(token: string, secret: string) {
+  async verify2FA(code: string) {
     return this.request('/auth/2fa/verify', {
       method: 'POST',
-      body: JSON.stringify({ token, secret }),
+      body: JSON.stringify({ code }),
     });
   }
 
-  async disable2FA() {
+  async disable2FA(code: string) {
     return this.request('/auth/2fa/disable', {
       method: 'POST',
+      body: JSON.stringify({ code }),
     });
   }
 

@@ -11,8 +11,9 @@ interface TwoFactorSettingsProps {
 export const TwoFactorSettings: React.FC<TwoFactorSettingsProps> = ({ user, onUpdate }) => {
   const [isEnabled, setIsEnabled] = useState(false);
   const [isSetupMode, setIsSetupMode] = useState(false);
+  const [isDisabling, setIsDisabling] = useState(false);
   const [qrCode, setQrCode] = useState('');
-  const [secret, setSecret] = useState('');
+  const [manualEntryKey, setManualEntryKey] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -21,14 +22,23 @@ export const TwoFactorSettings: React.FC<TwoFactorSettingsProps> = ({ user, onUp
     setIsEnabled(user?.twoFactorEnabled || false);
   }, [user]);
 
+  const resetForm = () => {
+    setIsSetupMode(false);
+    setIsDisabling(false);
+    setQrCode('');
+    setManualEntryKey('');
+    setVerificationCode('');
+    setError('');
+  };
+
   const handleSetup2FA = async () => {
     try {
       setLoading(true);
       setError('');
-      
+
       const response = await apiClient.setup2FA();
       setQrCode(response.qrCode);
-      setSecret(response.secret);
+      setManualEntryKey(response.manualEntryKey);
       setIsSetupMode(true);
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to setup 2FA';
@@ -42,13 +52,10 @@ export const TwoFactorSettings: React.FC<TwoFactorSettingsProps> = ({ user, onUp
     try {
       setLoading(true);
       setError('');
-      
-      await apiClient.verify2FA(verificationCode, secret);
+
+      await apiClient.verify2FA(verificationCode);
       setIsEnabled(true);
-      setIsSetupMode(false);
-      setQrCode('');
-      setSecret('');
-      setVerificationCode('');
+      resetForm();
       onUpdate();
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'Invalid verification code';
@@ -62,9 +69,10 @@ export const TwoFactorSettings: React.FC<TwoFactorSettingsProps> = ({ user, onUp
     try {
       setLoading(true);
       setError('');
-      
-      await apiClient.disable2FA();
+
+      await apiClient.disable2FA(verificationCode);
       setIsEnabled(false);
+      resetForm();
       onUpdate();
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to disable 2FA';
@@ -74,11 +82,24 @@ export const TwoFactorSettings: React.FC<TwoFactorSettingsProps> = ({ user, onUp
     }
   };
 
+  const codeInput = (
+    <input
+      type="text"
+      inputMode="numeric"
+      autoComplete="one-time-code"
+      value={verificationCode}
+      onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, ''))}
+      className="w-full px-4 py-3 bg-gray-700/50 border border-emerald-500/30 rounded-lg text-emerald-100 focus:border-emerald-400 focus:outline-none"
+      placeholder="123456"
+      maxLength={6}
+    />
+  );
+
   if (isSetupMode) {
     return (
       <div className="bg-gray-800/50 backdrop-blur-sm rounded-xl p-6 border border-emerald-500/20">
         <h3 className="text-xl font-semibold text-emerald-100 mb-4">Setup Two-Factor Authentication</h3>
-        
+
         <div className="space-y-4">
           <div className="text-center">
             <p className="text-emerald-100/70 mb-4">
@@ -96,7 +117,7 @@ export const TwoFactorSettings: React.FC<TwoFactorSettingsProps> = ({ user, onUp
               Manual Entry Key (if you can't scan the QR code):
             </label>
             <div className="bg-gray-700 p-3 rounded-lg font-mono text-sm text-emerald-100 break-all">
-              {secret}
+              {manualEntryKey}
             </div>
           </div>
 
@@ -104,14 +125,7 @@ export const TwoFactorSettings: React.FC<TwoFactorSettingsProps> = ({ user, onUp
             <label className="block text-emerald-100/70 text-sm font-medium mb-2">
               Enter verification code from your app:
             </label>
-            <input
-              type="text"
-              value={verificationCode}
-              onChange={(e) => setVerificationCode(e.target.value)}
-              className="w-full px-4 py-3 bg-gray-700/50 border border-emerald-500/30 rounded-lg text-emerald-100 focus:border-emerald-400 focus:outline-none"
-              placeholder="123456"
-              maxLength={6}
-            />
+            {codeInput}
           </div>
 
           {error && (
@@ -121,13 +135,13 @@ export const TwoFactorSettings: React.FC<TwoFactorSettingsProps> = ({ user, onUp
           <div className="flex gap-3">
             <button
               onClick={handleVerify2FA}
-              disabled={loading || !verificationCode}
+              disabled={loading || verificationCode.length !== 6}
               className="flex-1 bg-emerald-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-emerald-700 transition-colors duration-200 disabled:opacity-50"
             >
               {loading ? 'Verifying...' : 'Verify & Enable'}
             </button>
             <button
-              onClick={() => setIsSetupMode(false)}
+              onClick={resetForm}
               className="px-6 py-3 text-emerald-100/70 hover:text-emerald-100 transition-colors duration-200"
             >
               Cancel
@@ -141,7 +155,7 @@ export const TwoFactorSettings: React.FC<TwoFactorSettingsProps> = ({ user, onUp
   return (
     <div className="bg-gray-800/50 backdrop-blur-sm rounded-xl p-6 border border-emerald-500/20">
       <h3 className="text-xl font-semibold text-emerald-100 mb-4">Two-Factor Authentication</h3>
-      
+
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
@@ -149,17 +163,26 @@ export const TwoFactorSettings: React.FC<TwoFactorSettingsProps> = ({ user, onUp
               2FA Status: {isEnabled ? 'Enabled' : 'Disabled'}
             </p>
             <p className="text-emerald-100/70 text-sm">
-              {isEnabled 
+              {isEnabled
                 ? 'Your account is protected with two-factor authentication'
                 : 'Add an extra layer of security to your account'
               }
             </p>
           </div>
-          
+
           <div className={`w-12 h-6 rounded-full ${isEnabled ? 'bg-emerald-500' : 'bg-gray-600'} relative transition-colors duration-200`}>
             <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-transform duration-200 ${isEnabled ? 'translate-x-6' : 'translate-x-0.5'}`} />
           </div>
         </div>
+
+        {isDisabling && (
+          <div>
+            <label className="block text-emerald-100/70 text-sm font-medium mb-2">
+              Enter a code from your authenticator app to disable 2FA:
+            </label>
+            {codeInput}
+          </div>
+        )}
 
         {error && (
           <div className="text-red-400 text-sm">{error}</div>
@@ -174,17 +197,32 @@ export const TwoFactorSettings: React.FC<TwoFactorSettingsProps> = ({ user, onUp
             >
               {loading ? 'Setting up...' : 'Enable 2FA'}
             </button>
+          ) : isDisabling ? (
+            <>
+              <button
+                onClick={handleDisable2FA}
+                disabled={loading || verificationCode.length !== 6}
+                className="bg-red-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-red-700 transition-colors duration-200 disabled:opacity-50"
+              >
+                {loading ? 'Disabling...' : 'Confirm Disable'}
+              </button>
+              <button
+                onClick={resetForm}
+                className="px-6 py-3 text-emerald-100/70 hover:text-emerald-100 transition-colors duration-200"
+              >
+                Cancel
+              </button>
+            </>
           ) : (
             <button
-              onClick={handleDisable2FA}
-              disabled={loading}
-              className="bg-red-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-red-700 transition-colors duration-200 disabled:opacity-50"
+              onClick={() => setIsDisabling(true)}
+              className="bg-red-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-red-700 transition-colors duration-200"
             >
-              {loading ? 'Disabling...' : 'Disable 2FA'}
+              Disable 2FA
             </button>
           )}
         </div>
       </div>
     </div>
   );
-}; 
+};

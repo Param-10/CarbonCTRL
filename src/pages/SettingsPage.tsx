@@ -5,10 +5,11 @@ import { TwoFactorSettings } from '../components/TwoFactorSettings';
 import { apiClient } from '../lib/api';
 
 const SettingsPage = () => {
-  const { user, signOut } = useAuthStore();
+  const { user, refreshUser } = useAuthStore();
   const [loading, setLoading] = useState({
     profile: false,
-    password: false
+    password: false,
+    delete: false
   });
   
   const [profileData, setProfileData] = useState({
@@ -23,6 +24,8 @@ const SettingsPage = () => {
   });
   
   const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const [notifications, setNotifications] = useState<{
     type: 'success' | 'error';
     message: string;
@@ -48,7 +51,8 @@ const SettingsPage = () => {
         firstName: profileData.firstName,
         lastName: profileData.lastName
       });
-      
+      refreshUser().catch(err => console.error('Error refreshing user:', err));
+
       setNotifications({ type: 'success', message: 'Profile updated successfully' });
       setTimeout(() => setNotifications(null), 3000);
     } catch (err) {
@@ -71,16 +75,19 @@ const SettingsPage = () => {
     
     try {
       await apiClient.updateUser({
-        password: passwordData.newPassword
+        password: passwordData.newPassword,
+        currentPassword: user?.hasPassword ? passwordData.currentPassword : undefined
       });
-      
+
       setPasswordData({
         currentPassword: '',
         newPassword: '',
         confirmPassword: ''
       });
-      
+
       setIsChangingPassword(false);
+      // A Google-only user who just set a first password now has one
+      refreshUser().catch(err => console.error('Error refreshing user:', err));
       setNotifications({ type: 'success', message: 'Password changed successfully' });
       setTimeout(() => setNotifications(null), 3000);
     } catch (err) {
@@ -92,24 +99,34 @@ const SettingsPage = () => {
     }
   };
   
+  // Password accounts confirm with their password; Google-only accounts with 2FA use a code
+  const deleteConfirmationType = user?.hasPassword ? 'password' : user?.twoFactorEnabled ? 'code' : null;
+
   const handleDeleteAccount = async () => {
-    if (!confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
-      return;
-    }
-    
+    setLoading(prev => ({ ...prev, delete: true }));
+
     try {
-      // In a real implementation, you would typically have a secure server-side
-      // function to handle deletion of all user data
-      
-      // Sign out the user after successful deletion
-      await signOut();
-      // Redirect to the landing page
+      await apiClient.deleteAccount(
+        deleteConfirmationType === 'password'
+          ? { password: deleteConfirmation }
+          : deleteConfirmationType === 'code'
+            ? { code: deleteConfirmation }
+            : {}
+      );
+      localStorage.removeItem('carbonctrl_last_page');
+      // Full reload clears every in-memory store along with the session
       window.location.href = '/';
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to delete account';
       setNotifications({ type: 'error', message: errorMessage });
       setTimeout(() => setNotifications(null), 3000);
+      setLoading(prev => ({ ...prev, delete: false }));
     }
+  };
+
+  const handleCancelDelete = () => {
+    setIsConfirmingDelete(false);
+    setDeleteConfirmation('');
   };
 
   if (!user) {
@@ -211,6 +228,20 @@ const SettingsPage = () => {
 
           {isChangingPassword && (
             <div className="grid gap-4 p-4 border border-gray-700/50 rounded-lg bg-gray-800/20">
+              {user.hasPassword && (
+                <div>
+                  <label className="block font-mono text-sm text-emerald-100/70 mb-2">Current Password</label>
+                  <input
+                    type="password"
+                    autoComplete="current-password"
+                    value={passwordData.currentPassword}
+                    onChange={(e) => setPasswordData({ ...passwordData, currentPassword: e.target.value })}
+                    className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-3 text-white font-mono placeholder-gray-400 focus:border-emerald-500/50 focus:outline-none"
+                    placeholder="Enter current password"
+                  />
+                </div>
+              )}
+
               <div>
                 <label className="block font-mono text-sm text-emerald-100/70 mb-2">New Password</label>
                 <input
@@ -251,7 +282,7 @@ const SettingsPage = () => {
       <TwoFactorSettings 
         user={user} 
         onUpdate={() => {
-          // Refresh user data if needed
+          refreshUser().catch(err => console.error('Error refreshing user:', err));
           setNotifications({ type: 'success', message: '2FA settings updated successfully' });
           setTimeout(() => setNotifications(null), 3000);
         }} 
@@ -270,12 +301,51 @@ const SettingsPage = () => {
             <p className="font-mono text-sm text-gray-400 mb-4">
               Permanently delete your account and all associated data. This action cannot be undone.
             </p>
-            <button
-              onClick={handleDeleteAccount}
-              className="bg-red-500/20 hover:bg-red-500/30 text-red-300 font-mono text-sm py-2 px-4 rounded-lg transition-colors"
-            >
-              Delete Account
-            </button>
+            {!isConfirmingDelete ? (
+              <button
+                onClick={() => setIsConfirmingDelete(true)}
+                className="bg-red-500/20 hover:bg-red-500/30 text-red-300 font-mono text-sm py-2 px-4 rounded-lg transition-colors"
+              >
+                Delete Account
+              </button>
+            ) : (
+              <div className="space-y-4">
+                {deleteConfirmationType && (
+                  <div>
+                    <label className="block font-mono text-sm text-red-200/80 mb-2">
+                      {deleteConfirmationType === 'password'
+                        ? 'Enter your password to confirm'
+                        : 'Enter a code from your authenticator app to confirm'}
+                    </label>
+                    <input
+                      type={deleteConfirmationType === 'password' ? 'password' : 'text'}
+                      inputMode={deleteConfirmationType === 'code' ? 'numeric' : undefined}
+                      autoComplete={deleteConfirmationType === 'password' ? 'current-password' : 'one-time-code'}
+                      value={deleteConfirmation}
+                      onChange={(e) => setDeleteConfirmation(e.target.value)}
+                      className="w-full bg-gray-800/50 border border-red-500/30 rounded-lg px-4 py-3 text-white font-mono placeholder-gray-400 focus:border-red-500/60 focus:outline-none"
+                      placeholder={deleteConfirmationType === 'password' ? 'Password' : '123456'}
+                    />
+                  </div>
+                )}
+                <div className="flex gap-3">
+                  <button
+                    onClick={handleDeleteAccount}
+                    disabled={loading.delete || (deleteConfirmationType !== null && !deleteConfirmation)}
+                    className="bg-red-600 hover:bg-red-700 text-white font-mono text-sm py-2 px-4 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    {loading.delete ? 'Deleting...' : 'Permanently Delete Account'}
+                  </button>
+                  <button
+                    onClick={handleCancelDelete}
+                    disabled={loading.delete}
+                    className="font-mono text-sm text-gray-300 hover:text-white py-2 px-4 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

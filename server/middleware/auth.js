@@ -10,6 +10,12 @@ const auth = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    // Purpose-scoped tokens (e.g. the pending-2FA token) are not session tokens
+    if (decoded.purpose) {
+      return res.status(401).json({ error: 'Invalid token.' });
+    }
+
     const user = await User.findById(decoded.userId).select('-password');
     
     if (!user) {

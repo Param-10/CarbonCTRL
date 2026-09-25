@@ -1,25 +1,22 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Leaf, Mail, Lock, ArrowRight } from 'lucide-react';
-import { useAuthStore } from '../store/authStore';
-import { apiClient } from '../lib/api';
+import { Leaf, Mail, Lock, ArrowRight, ShieldCheck } from 'lucide-react';
+import { useAuthStore, LoginResult } from '../store/authStore';
+import { loadGoogleIdentityScript } from '../lib/googleIdentity';
 
-// Extend Window interface for Google
-interface GoogleAccounts {
-  id: {
-    initialize: (config: { client_id: string; callback: (response: { credential: string }) => void }) => void;
-    prompt: () => void;
-  };
-}
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
+// Google renders its button at a fixed pixel width within this range
+const GOOGLE_BUTTON_MIN_WIDTH = 200;
+const GOOGLE_BUTTON_MAX_WIDTH = 400;
 
-declare global {
-  interface Window {
-    google?: {
-      accounts: GoogleAccounts;
-    };
+const getErrorMessage = (err: unknown, fallback: string) => {
+  const message = err instanceof Error ? err.message : fallback;
+  if (message.includes('NetworkError') || message.includes('Failed to fetch')) {
+    return 'Cannot reach the server. Check VITE_API_URL and that the API is running.';
   }
-}
+  return message;
+};
 
 export default function AuthPage() {
   const [isSignIn, setIsSignIn] = useState(true);
@@ -27,125 +24,174 @@ export default function AuthPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [twoFactorToken, setTwoFactorToken] = useState<string | null>(null);
+  const [twoFactorCode, setTwoFactorCode] = useState('');
+  const googleButtonRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
-  const { signIn, signUp, setSession } = useAuthStore();
+  const { signIn, signUp, signInWithGoogle, completeTwoFactor } = useAuthStore();
 
-  // Handle Google OAuth callback
+  const handleLoginResult = useCallback((result: LoginResult) => {
+    if (result.twoFactorToken) {
+      setTwoFactorToken(result.twoFactorToken);
+      setTwoFactorCode('');
+      return;
+    }
+    navigate('/dashboard');
+  }, [navigate]);
+
+  // Render Google's sign-in button (hidden during the 2FA step)
   useEffect(() => {
-    const handleGoogleCallback = async (code: string) => {
-      try {
-        console.log('Starting Google OAuth callback processing...');
-        setLoading(true);
-        setError('');
-        
-        // Send authorization code to your backend
-        console.log('Sending auth code to backend...');
-        const response = await apiClient.googleAuth(code, '', '');
-        console.log('Backend response received:', response);
-        
-        // Set the user session in the auth store
-        const user = { ...response.user, id: response.user._id }; // Add id for compatibility
-        const session = { access_token: response.token, user };
-        setSession(session);
-        console.log('User session set, redirecting to dashboard...');
-        
-        navigate('/dashboard');
-      } catch (err: unknown) {
-        console.error('Google OAuth callback error:', err);
-        const errorMessage = err instanceof Error ? err.message : 'Google authentication failed';
-        if (errorMessage.includes('NetworkError') || errorMessage.includes('Failed to fetch')) {
-          setError('Authentication failed: API unreachable. Check VITE_API_URL and that the server is running.');
-        } else {
-          setError(errorMessage);
+    if (!GOOGLE_CLIENT_ID || twoFactorToken) return;
+
+    let cancelled = false;
+
+    loadGoogleIdentityScript()
+      .then(() => {
+        const container = googleButtonRef.current;
+        if (cancelled || !container || !window.google) return;
+
+        window.google.accounts.id.initialize({
+          client_id: GOOGLE_CLIENT_ID,
+          callback: async ({ credential }) => {
+            setError('');
+            setLoading(true);
+            try {
+              handleLoginResult(await signInWithGoogle(credential));
+            } catch (err: unknown) {
+              setError(getErrorMessage(err, 'Google sign-in failed'));
+            } finally {
+              setLoading(false);
+            }
+          },
+        });
+
+        window.google.accounts.id.renderButton(container, {
+          theme: 'outline',
+          size: 'large',
+          text: 'continue_with',
+          shape: 'rectangular',
+          width: Math.min(GOOGLE_BUTTON_MAX_WIDTH, Math.max(GOOGLE_BUTTON_MIN_WIDTH, container.offsetWidth)),
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError('Could not load Google sign-in. Check your connection or content blocker.');
         }
-      } finally {
-        setLoading(false);
-      }
+      });
+
+    return () => {
+      cancelled = true;
     };
-
-    // Listen for messages from the popup window
-    const handleMessage = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) return;
-      
-      if (event.data.type === 'GOOGLE_OAUTH_SUCCESS') {
-        console.log('Received OAuth success message:', event.data);
-        handleGoogleCallback(event.data.code);
-      } else if (event.data.type === 'GOOGLE_OAUTH_ERROR') {
-        console.error('OAuth error:', event.data.error);
-        setError(event.data.error || 'Google authentication failed');
-        setLoading(false);
-      }
-    };
-
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, [navigate, setSession, setError, setLoading]);
-
-  const handleGoogleSignIn = () => {
-    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || 'your-google-client-id';
-    if (!clientId || clientId === 'your-google-client-id') {
-      setError('Google sign-in is not configured. Set VITE_GOOGLE_CLIENT_ID in your frontend environment.');
-      return;
-    }
-    const redirectUri = window.location.origin + '/oauth-callback.html'; // Fix: match the actual file
-    
-    // Debug logging
-    console.log('Opening Google OAuth popup...');
-    console.log('Client ID:', clientId);
-    
-    // Use the exact format from Google OAuth 2.0 playground
-    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
-      `client_id=${clientId}&` +
-      `redirect_uri=${encodeURIComponent(redirectUri)}&` +
-      `response_type=code&` +
-      `scope=${encodeURIComponent('openid email profile')}&` +
-      `access_type=offline&` +
-      `prompt=consent`;
-    
-    console.log('OAuth URL:', authUrl);
-    
-    setLoading(true);
-    
-    // Open popup window
-    const popup = window.open(
-      authUrl,
-      'google-oauth',
-      'width=500,height=600,scrollbars=yes,resizable=yes'
-    );
-    
-    // Check if popup was blocked
-    if (!popup) {
-      setError('Popup was blocked. Please allow popups for this site.');
-      setLoading(false);
-      return;
-    }
-    
-    // Monitor popup
-    const checkClosed = setInterval(() => {
-      if (popup.closed) {
-        clearInterval(checkClosed);
-        setLoading(false);
-        console.log('Popup closed by user');
-      }
-    }, 1000);
-  };
+  }, [twoFactorToken, handleLoginResult, signInWithGoogle]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setLoading(true);
 
     try {
       if (isSignIn) {
-        await signIn(email, password);
+        handleLoginResult(await signIn(email, password));
       } else {
         await signUp(email, password);
+        navigate('/dashboard');
       }
-      navigate('/dashboard');
     } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
-      setError(errorMessage);
+      setError(getErrorMessage(err, 'An unexpected error occurred'));
+    } finally {
+      setLoading(false);
     }
   };
+
+  const handleTwoFactorSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!twoFactorToken) return;
+
+    setError('');
+    setLoading(true);
+
+    try {
+      await completeTwoFactor(twoFactorToken, twoFactorCode);
+      navigate('/dashboard');
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, 'Invalid verification code'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBackToSignIn = () => {
+    setTwoFactorToken(null);
+    setTwoFactorCode('');
+    setError('');
+  };
+
+  if (twoFactorToken) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-gray-800 via-emerald-900 to-gray-800 flex items-center justify-center px-4">
+        <div className="w-full max-w-md">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="glass-card p-8 rounded-2xl"
+          >
+            <div className="flex justify-center mb-8">
+              <div className="bg-emerald-500/20 p-4 rounded-full">
+                <ShieldCheck className="w-8 h-8 text-emerald-400" />
+              </div>
+            </div>
+
+            <h2 className="text-3xl font-bold text-center text-white mb-4 font-space">
+              Two-Factor Authentication
+            </h2>
+            <p className="text-center text-emerald-100/70 font-mono text-sm mb-8">
+              Enter the 6-digit code from your authenticator app.
+            </p>
+
+            {error && (
+              <div className="bg-red-500/10 border border-red-500/50 rounded-lg p-4 mb-6">
+                <p className="text-red-400 text-sm font-mono">{error}</p>
+              </div>
+            )}
+
+            <form onSubmit={handleTwoFactorSubmit} className="space-y-6">
+              <input
+                id="two-factor-code"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                autoFocus
+                value={twoFactorCode}
+                onChange={(e) => setTwoFactorCode(e.target.value.replace(/\D/g, ''))}
+                className="w-full bg-gray-800/50 border border-emerald-500/30 rounded-lg py-3 px-4 text-white text-center text-2xl tracking-[0.5em] placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
+                placeholder="000000"
+                maxLength={6}
+                aria-label="Verification code"
+                required
+              />
+
+              <button
+                type="submit"
+                disabled={loading || twoFactorCode.length !== 6}
+                className="w-full bg-emerald-500 text-white py-3 px-6 rounded-lg font-semibold hover:bg-emerald-600 transition-colors duration-200 flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <span className="font-space">{loading ? 'Verifying...' : 'Verify'}</span>
+              </button>
+            </form>
+
+            <div className="mt-6 text-center">
+              <button
+                onClick={handleBackToSignIn}
+                className="text-emerald-300 hover:text-emerald-200 transition-colors duration-200 font-mono text-sm"
+              >
+                Back to sign in
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-800 via-emerald-900 to-gray-800 flex items-center justify-center px-4">
@@ -171,30 +217,21 @@ export default function AuthPage() {
             </div>
           )}
 
-          {/* Google Sign-In Button */}
-          <button
-            type="button"
-            onClick={handleGoogleSignIn}
-            disabled={loading}
-            className="w-full bg-white text-gray-900 py-3 px-6 rounded-lg font-semibold hover:bg-gray-100 transition-colors duration-200 flex items-center justify-center gap-3 mb-6 disabled:opacity-50"
-          >
-            <svg className="w-5 h-5" viewBox="0 0 24 24">
-              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-            </svg>
-            <span>Continue with Google</span>
-          </button>
+          {GOOGLE_CLIENT_ID && (
+            <>
+              {/* Google Identity Services renders its own button into this container */}
+              <div ref={googleButtonRef} className="w-full flex justify-center mb-6 min-h-[44px]" />
 
-          <div className="relative mb-6">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-emerald-500/30"></div>
-            </div>
-            <div className="relative flex justify-center text-sm">
-              <span className="px-2 bg-gray-800 text-emerald-100/70 font-mono">or</span>
-            </div>
-          </div>
+              <div className="relative mb-6">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-emerald-500/30"></div>
+                </div>
+                <div className="relative flex justify-center text-sm">
+                  <span className="px-2 bg-gray-800 text-emerald-100/70 font-mono">or</span>
+                </div>
+              </div>
+            </>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
@@ -206,6 +243,7 @@ export default function AuthPage() {
                 <input
                   id="email"
                   type="email"
+                  autoComplete="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full bg-gray-800/50 border border-emerald-500/30 rounded-lg py-3 px-10 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
@@ -224,6 +262,7 @@ export default function AuthPage() {
                 <input
                   id="password"
                   type="password"
+                  autoComplete={isSignIn ? 'current-password' : 'new-password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full bg-gray-800/50 border border-emerald-500/30 rounded-lg py-3 px-10 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
@@ -235,9 +274,12 @@ export default function AuthPage() {
 
             <button
               type="submit"
-              className="w-full bg-emerald-500 text-white py-3 px-6 rounded-lg font-semibold hover:bg-emerald-600 transition-colors duration-200 flex items-center justify-center gap-2 group"
+              disabled={loading}
+              className="w-full bg-emerald-500 text-white py-3 px-6 rounded-lg font-semibold hover:bg-emerald-600 transition-colors duration-200 flex items-center justify-center gap-2 group disabled:opacity-50"
             >
-              <span className="font-space">{isSignIn ? 'Sign In' : 'Create Account'}</span>
+              <span className="font-space">
+                {loading ? 'Please wait...' : isSignIn ? 'Sign In' : 'Create Account'}
+              </span>
               <ArrowRight className="w-5 h-5 transform group-hover:translate-x-1 transition-transform" />
             </button>
           </form>
