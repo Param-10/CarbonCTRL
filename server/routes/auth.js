@@ -198,18 +198,34 @@ router.post('/google', authLimiter, async (req, res) => {
           return res.status(409).json({ error: 'This email is linked to a different Google account' });
         }
 
+        // Email sign-up never proves ownership, so anyone could have registered this address first.
+        // Drop a password nobody verified and sign out its sessions before handing the account over.
+        if (!user.isEmailVerified) {
+          user.password = undefined;
+          user.tokenVersion = (user.tokenVersion ?? 0) + 1;
+        }
+
         // Google has verified ownership of the email, so link it to the existing account
         user.googleId = payload.sub;
         user.isEmailVerified = true;
         if (!user.name) user.name = getGoogleName(payload);
         await user.save();
       } else {
-        user = await User.create({
-          name: getGoogleName(payload),
-          email,
-          googleId: payload.sub,
-          isEmailVerified: true
-        });
+        try {
+          user = await User.create({
+            name: getGoogleName(payload),
+            email,
+            googleId: payload.sub,
+            isEmailVerified: true
+          });
+        } catch (createError) {
+          if (createError.code !== DUPLICATE_KEY_ERROR) throw createError;
+          // A simultaneous first sign-in (double-click, two tabs) may have just created this user
+          user = await User.findOne({ googleId: payload.sub });
+          if (!user) {
+            return res.status(409).json({ error: 'An account with this email was just created. Please try again.' });
+          }
+        }
       }
     }
 

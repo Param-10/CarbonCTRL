@@ -219,7 +219,60 @@ describe('Google sign-in', () => {
     expect(await User.countDocuments()).toBe(1);
     const user = await User.findOne({ email: 'jane@gmail.com' });
     expect(user.googleId).toBe('google-sub-123');
-    expect(user.password).toBeTruthy();
+    expect(user.isEmailVerified).toBe(true);
+  });
+
+  it('locks out whoever registered the email first when Google proves the real owner', async () => {
+    // An attacker signs up with the victim's address before the victim ever uses the app
+    const attackerToken = await signUp('jane@gmail.com', 'attacker-pass');
+    verifyGoogleIdToken.mockResolvedValue(googlePayload());
+
+    const res = await googleSignIn();
+
+    expect(res.status).toBe(200);
+    expect(res.body.user.hasPassword).toBe(false);
+
+    const passwordSignIn = await request(app)
+      .post('/api/auth/signin')
+      .send({ email: 'jane@gmail.com', password: 'attacker-pass' });
+    expect(passwordSignIn.status).toBe(401);
+
+    const oldSession = await authed('get', '/api/auth/session', attackerToken);
+    expect(oldSession.status).toBe(401);
+
+    const googleSession = await authed('get', '/api/auth/session', res.body.token);
+    expect(googleSession.status).toBe(200);
+  });
+
+  it('keeps the password when linking an account whose email is already verified', async () => {
+    await signUp('jane@gmail.com');
+    await User.updateOne({ email: 'jane@gmail.com' }, { isEmailVerified: true });
+    verifyGoogleIdToken.mockResolvedValue(googlePayload());
+
+    const res = await googleSignIn();
+
+    expect(res.status).toBe(200);
+    expect(res.body.user.hasPassword).toBe(true);
+  });
+
+  it('returns the account created by a simultaneous first Google sign-in instead of failing', async () => {
+    verifyGoogleIdToken.mockResolvedValue(googlePayload());
+    // Let another request create the user just before this one's insert runs
+    const createUser = User.create.bind(User);
+    const createSpy = vi.spyOn(User, 'create').mockImplementationOnce(async (doc) => {
+      await createUser(doc);
+      return createUser(doc);
+    });
+
+    try {
+      const res = await googleSignIn();
+
+      expect(res.status).toBe(200);
+      expect(res.body.user.email).toBe('jane@gmail.com');
+      expect(await User.countDocuments()).toBe(1);
+    } finally {
+      createSpy.mockRestore();
+    }
   });
 
   it('refuses to link an email already linked to a different Google account', async () => {
