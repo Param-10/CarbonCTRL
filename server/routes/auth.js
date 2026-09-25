@@ -257,7 +257,7 @@ router.put('/user', auth, async (req, res) => {
       user.name = parsedName;
     }
 
-    const isChangingPassword = Boolean(password);
+const isChangingPassword = password !== undefined;
     if (isChangingPassword) {
       if (typeof password !== 'string') {
         return res.status(400).json({ error: 'Invalid password' });
