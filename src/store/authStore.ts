@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { apiClient } from '../lib/api';
 import { useCompanyStore } from './companyStore';
+import { useCarbonStore } from './carbonStore';
+import { useOffsetStore } from './offsetStore';
 
 interface User {
   _id: string;
@@ -89,8 +91,10 @@ export const useAuthStore = create<AuthState>((set) => ({
     try {
       await apiClient.signOut();
       // Tear down user-scoped caches so another account's data never renders
-      // in this session (the company store caches the last fetched profile).
+      // in this session (stores cache the last fetched profiles/scores).
       useCompanyStore.getState().reset();
+      useCarbonStore.getState().reset();
+      useOffsetStore.getState().reset();
       set({ user: null, session: null, sessionCheckFailed: false });
     } finally {
       set({ loading: false });
@@ -102,6 +106,9 @@ export const useAuthStore = create<AuthState>((set) => ({
       const user = { ...session.user, id: session.user._id }; // Add id for compatibility
       set({ session: { ...session, user }, user, loading: false, sessionCheckFailed: false });
     } else {
+      useCompanyStore.getState().reset();
+      useCarbonStore.getState().reset();
+      useOffsetStore.getState().reset();
       set({ session: null, user: null, loading: false, sessionCheckFailed: false });
     }
   },
