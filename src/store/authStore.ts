@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { apiClient, type GoogleLinkOptions } from '../lib/api';
+import { apiClient } from '../lib/api';
 import { useCompanyStore } from './companyStore';
 import { useCarbonStore } from './carbonStore';
 import { useOffsetStore } from './offsetStore';
@@ -9,9 +9,12 @@ interface User {
   id: string; // Keep for compatibility
   email: string;
   name?: string;
+  firstName?: string;
+  lastName?: string;
   createdAt: string;
   updatedAt: string;
-  hasPassword?: boolean;
+  twoFactorEnabled?: boolean;
+  googleId?: string;
 }
 
 interface Session {
@@ -19,32 +22,25 @@ interface Session {
   user: User;
 }
 
-interface AuthResponse {
-  user: Omit<User, 'id'>;
-  token: string;
+/** Returned by signIn when the account requires a 2FA code to complete login. */
+interface TwoFactorRequired {
+  twoFactorToken: string;
 }
 
 interface AuthState {
   user: User | null;
   session: Session | null;
   loading: boolean;
-  // The stored session could not be checked (server unreachable), as opposed to being rejected
+  // A saved session could not be checked (server unreachable), as opposed to rejected
   sessionCheckFailed: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
-  signInWithGoogle: (credential: string, link?: GoogleLinkOptions) => Promise<void>;
+  signIn: (email: string, password: string) => Promise<TwoFactorRequired | null>;
   signUp: (name: string, email: string, password: string) => Promise<void>;
+  signInWith2FA: (twoFactorToken: string, code: string) => Promise<void>;
   signOut: () => Promise<void>;
-  clearSession: () => void;
+  setSession: (session: Session | null) => void;
   initializeAuth: () => Promise<void>;
-  refreshUser: () => Promise<void>;
 }
 
-const toSessionState = (response: AuthResponse) => {
-  const user = { ...response.user, id: response.user._id }; // Add id for compatibility
-  return { user, session: { access_token: response.token, user } };
-};
-
-// Drop everything cached for the previous user so the next sign-in starts clean
 const resetUserData = () => {
   useCompanyStore.getState().reset();
   useCarbonStore.getState().reset();
@@ -56,53 +52,87 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   session: null,
   loading: true,
   sessionCheckFailed: false,
-
+  
   signIn: async (email, password) => {
     try {
       const response = await apiClient.signIn(email, password);
+
+      // 2FA-protected account: the API only returns a short-lived challenge
+      // token, no session. Bubble it up so the UI can ask for the code.
+      if (response.requiresTwoFactor) {
+        return { twoFactorToken: response.twoFactorToken };
+      }
+
+      const user = { ...response.user, id: response.user._id }; // Add id for compatibility
+      const session = { access_token: response.token, user };
       resetUserData();
-      set(toSessionState(response));
+      set({ user, session, sessionCheckFailed: false });
+      return null;
     } finally {
       set({ loading: false });
     }
   },
-
-  signInWithGoogle: async (credential, link) => {
+  
+  signInWith2FA: async (twoFactorToken, code) => {
     try {
-      const response = await apiClient.googleAuth(credential, link);
+      const response = await apiClient.signInWith2FA(twoFactorToken, code);
+      const user = { ...response.user, id: response.user._id }; // Add id for compatibility
+      const session = { access_token: response.token, user };
       resetUserData();
-      set(toSessionState(response));
+      set({ user, session, sessionCheckFailed: false });
     } finally {
       set({ loading: false });
     }
   },
-
+  
   signUp: async (name, email, password) => {
     try {
       const response = await apiClient.signUp(name, email, password);
+      const user = { ...response.user, id: response.user._id }; // Add id for compatibility
+      const session = { access_token: response.token, user };
       resetUserData();
-      set(toSessionState(response));
+      set({ user, session, sessionCheckFailed: false });
     } finally {
       set({ loading: false });
     }
   },
-
+  
   signOut: async () => {
-    await apiClient.signOut();
-    get().clearSession();
-  },
-
-  // Clear the local session without calling the server (sign-out, expired or revoked token)
-  clearSession: () => {
-    apiClient.setToken(null);
-    resetUserData();
-    set({ user: null, session: null, loading: false, sessionCheckFailed: false });
-  },
-
-  initializeAuth: async () => {
     try {
-      await get().refreshUser();
-      set({ sessionCheckFailed: false });
+      await apiClient.signOut();
+    } finally {
+      // Tear down user-scoped caches so another account's data never renders
+      // in this session (stores cache the last fetched profiles/scores).
+      resetUserData();
+      set({ user: null, session: null, sessionCheckFailed: false });
+      set({ loading: false });
+    }
+  },
+  
+  setSession: (session) => {
+    if (session) {
+      const user = { ...session.user, id: session.user._id }; // Add id for compatibility
+      if (get().user?._id !== user._id) resetUserData();
+      set({ session: { ...session, user }, user, loading: false, sessionCheckFailed: false });
+    } else {
+      resetUserData();
+      set({ session: null, user: null, loading: false, sessionCheckFailed: false });
+    }
+  },
+  
+  initializeAuth: async () => {
+    const tokenAtStart = apiClient.getToken();
+    try {
+      const response = await apiClient.getSession();
+      if (apiClient.getToken() !== tokenAtStart) return;
+      if (response.session) {
+        const user = { ...response.session.user, id: response.session.user._id }; // Add id for compatibility
+        const session = { ...response.session, user };
+        if (get().user?._id !== user._id) resetUserData();
+        set({ session, user, sessionCheckFailed: false });
+      } else {
+        set({ session: null, user: null, sessionCheckFailed: false });
+      }
     } catch (error) {
       // The token is kept (only a 401 clears it), so retrying can restore the session
       console.error('Could not check the stored session:', error);
@@ -111,25 +141,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ loading: false });
     }
   },
-
-  // Re-read the current user from the server, e.g. after changing account settings
-  refreshUser: async () => {
-    const response = await apiClient.getSession();
-    if (response.session) {
-      const user = { ...response.session.user, id: response.session.user._id }; // Add id for compatibility
-      set({ session: { ...response.session, user }, user });
-    } else {
-      set({ session: null, user: null });
-    }
-  },
 }));
-
-// A rejected session token anywhere in the app signs the user out locally
-apiClient.setUnauthorizedHandler(() => {
-  if (useAuthStore.getState().user) {
-    useAuthStore.getState().clearSession();
-  }
-});
 
 // Note: With JWT tokens, we don't need real-time auth state changes
 // Auth state is managed through the store and API calls
+apiClient.setUnauthorizedHandler(() => {
+  useAuthStore.getState().setSession(null);
+});

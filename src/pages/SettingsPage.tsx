@@ -1,17 +1,14 @@
 import { useState, useEffect } from 'react';
 import { User, Shield, Trash2 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
+import { TwoFactorSettings } from '../components/TwoFactorSettings';
 import { apiClient } from '../lib/api';
 
-// Google-only accounts have no password, so they confirm deletion by typing this word
-const DELETE_CONFIRMATION_WORD = 'DELETE';
-
 const SettingsPage = () => {
-  const { user, refreshUser } = useAuthStore();
+  const { user, signOut, session, setSession } = useAuthStore();
   const [loading, setLoading] = useState({
     profile: false,
-    password: false,
-    delete: false
+    password: false
   });
   
   const [name, setName] = useState(user?.name || '');
@@ -23,14 +20,15 @@ const SettingsPage = () => {
   });
   
   const [isChangingPassword, setIsChangingPassword] = useState(false);
-  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
-  const [deleteConfirmation, setDeleteConfirmation] = useState('');
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleting, setDeleting] = useState(false);
   const [notifications, setNotifications] = useState<{
     type: 'success' | 'error';
     message: string;
   } | null>(null);
 
-  // Update the name field when user changes
+  // Update profile data when user changes
   useEffect(() => {
     if (user) {
       setName(user.name || '');
@@ -43,9 +41,9 @@ const SettingsPage = () => {
     setLoading(prev => ({ ...prev, profile: true }));
     
     try {
-      await apiClient.updateUser({ name });
-      refreshUser().catch(err => console.error('Error refreshing user:', err));
-
+      const response = await apiClient.updateUser({ name });
+      if (session) setSession({ access_token: session.access_token, user: response.user });
+      
       setNotifications({ type: 'success', message: 'Profile updated successfully' });
       setTimeout(() => setNotifications(null), 3000);
     } catch (err) {
@@ -58,12 +56,6 @@ const SettingsPage = () => {
   };
 
   const handlePasswordChange = async () => {
-    if (!passwordData.newPassword) {
-      setNotifications({ type: 'error', message: 'Enter a new password' });
-      setTimeout(() => setNotifications(null), 3000);
-      return;
-    }
-
     if (passwordData.newPassword !== passwordData.confirmPassword) {
       setNotifications({ type: 'error', message: 'Passwords do not match' });
       setTimeout(() => setNotifications(null), 3000);
@@ -73,20 +65,19 @@ const SettingsPage = () => {
     setLoading(prev => ({ ...prev, password: true }));
     
     try {
-      await apiClient.updateUser({
+      const response = await apiClient.updateUser({
         password: passwordData.newPassword,
-        currentPassword: user?.hasPassword ? passwordData.currentPassword : undefined
+        currentPassword: passwordData.currentPassword
       });
-
+      if (response.token) setSession({ access_token: response.token, user: response.user });
+      
       setPasswordData({
         currentPassword: '',
         newPassword: '',
         confirmPassword: ''
       });
-
+      
       setIsChangingPassword(false);
-      // A Google-only user who just set a first password now has one
-      refreshUser().catch(err => console.error('Error refreshing user:', err));
       setNotifications({ type: 'success', message: 'Password changed successfully' });
       setTimeout(() => setNotifications(null), 3000);
     } catch (err) {
@@ -98,29 +89,31 @@ const SettingsPage = () => {
     }
   };
   
-  const isDeleteConfirmed = user?.hasPassword
-    ? deleteConfirmation.length > 0
-    : deleteConfirmation === DELETE_CONFIRMATION_WORD;
-
   const handleDeleteAccount = async () => {
-    setLoading(prev => ({ ...prev, delete: true }));
+    // Step 0: first click — confirm intent
+    if (!confirmingDelete) {
+      if (!confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
+        return;
+      }
+      setConfirmingDelete(true);
+      return;
+    }
 
+    // Step 1: confirmed — send the password for re-authentication so a stolen
+    // session token alone cannot delete the account.
+    setDeleting(true);
     try {
-      await apiClient.deleteAccount(user?.hasPassword ? { password: deleteConfirmation } : {});
-      localStorage.removeItem('carbonctrl_last_page');
-      // Full reload clears every in-memory store along with the session
+      await apiClient.deleteAccount(deletePassword || undefined);
+      // Sign out the user after successful deletion
+      await signOut();
+      // Redirect to the landing page
       window.location.href = '/';
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to delete account';
       setNotifications({ type: 'error', message: errorMessage });
       setTimeout(() => setNotifications(null), 3000);
-      setLoading(prev => ({ ...prev, delete: false }));
+      setDeleting(false);
     }
-  };
-
-  const handleCancelDelete = () => {
-    setIsConfirmingDelete(false);
-    setDeleteConfirmation('');
   };
 
   if (!user) {
@@ -156,22 +149,21 @@ const SettingsPage = () => {
           <h2 className="font-space text-2xl font-semibold text-white">Profile Information</h2>
         </div>
 
-        <div className="grid gap-6">
+        <div className="grid md:grid-cols-2 gap-6">
           <div>
             <label className="block font-mono text-sm text-emerald-100/70 mb-3" htmlFor="settings-name">Name</label>
             <input
               id="settings-name"
               type="text"
-              autoComplete="name"
-              maxLength={100}
               value={name}
               onChange={(e) => setName(e.target.value)}
+              maxLength={100}
               className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-3 text-white font-mono placeholder-gray-400 focus:border-emerald-500/50 focus:outline-none"
-              placeholder="Enter your full name"
+              placeholder="Enter your name"
             />
           </div>
 
-          <div>
+          <div className="md:col-span-2">
             <label className="block font-mono text-sm text-emerald-100/70 mb-3">Email</label>
             <div className="w-full bg-gray-800/30 border border-gray-700/30 rounded-lg px-4 py-3 text-gray-400 font-mono">
               {user.email}
@@ -202,42 +194,33 @@ const SettingsPage = () => {
           <div className="flex items-center justify-between p-4 border border-gray-700/50 rounded-lg">
             <div>
               <h3 className="font-mono text-white mb-1">Password</h3>
-              <p className="font-mono text-sm text-gray-400">
-                {user.hasPassword
-                  ? 'Update your password. Other signed-in devices will be signed out.'
-                  : 'You sign in with Google. Set a password to also sign in with email.'}
-              </p>
+              <p className="font-mono text-sm text-gray-400">Update your password</p>
             </div>
             <button
               onClick={() => setIsChangingPassword(!isChangingPassword)}
               className="bg-gray-700/50 hover:bg-gray-700/70 text-white font-mono text-sm py-2 px-4 rounded-lg transition-colors"
             >
-              {isChangingPassword ? 'Cancel' : user.hasPassword ? 'Change Password' : 'Set Password'}
+              {isChangingPassword ? 'Cancel' : 'Change Password'}
             </button>
           </div>
 
           {isChangingPassword && (
             <div className="grid gap-4 p-4 border border-gray-700/50 rounded-lg bg-gray-800/20">
-              {user.hasPassword && (
-                <div>
-                  <label className="block font-mono text-sm text-emerald-100/70 mb-2">Current Password</label>
-                  <input
-                    type="password"
-                    autoComplete="current-password"
-                    value={passwordData.currentPassword}
-                    onChange={(e) => setPasswordData({ ...passwordData, currentPassword: e.target.value })}
-                    className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-3 text-white font-mono placeholder-gray-400 focus:border-emerald-500/50 focus:outline-none"
-                    placeholder="Enter current password"
-                  />
-                </div>
-              )}
+              <div>
+                <label className="block font-mono text-sm text-emerald-100/70 mb-2">Current Password</label>
+                <input
+                  type="password"
+                  value={passwordData.currentPassword}
+                  onChange={(e) => setPasswordData({ ...passwordData, currentPassword: e.target.value })}
+                  className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-3 text-white font-mono placeholder-gray-400 focus:border-emerald-500/50 focus:outline-none"
+                  placeholder="Enter current password"
+                />
+              </div>
 
               <div>
                 <label className="block font-mono text-sm text-emerald-100/70 mb-2">New Password</label>
                 <input
                   type="password"
-                  autoComplete="new-password"
-                  maxLength={72}
                   value={passwordData.newPassword}
                   onChange={(e) => setPasswordData({ ...passwordData, newPassword: e.target.value })}
                   className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-3 text-white font-mono placeholder-gray-400 focus:border-emerald-500/50 focus:outline-none"
@@ -249,8 +232,6 @@ const SettingsPage = () => {
                 <label className="block font-mono text-sm text-emerald-100/70 mb-2">Confirm New Password</label>
                 <input
                   type="password"
-                  autoComplete="new-password"
-                  maxLength={72}
                   value={passwordData.confirmPassword}
                   onChange={(e) => setPasswordData({ ...passwordData, confirmPassword: e.target.value })}
                   className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-3 text-white font-mono placeholder-gray-400 focus:border-emerald-500/50 focus:outline-none"
@@ -272,6 +253,17 @@ const SettingsPage = () => {
         </div>
       </div>
 
+      {/* Two-Factor Authentication */}
+      <TwoFactorSettings 
+        user={user} 
+        onUpdate={async () => {
+          const response = await apiClient.getSession();
+          if (response.session) setSession(response.session);
+          setNotifications({ type: 'success', message: '2FA settings updated successfully' });
+          setTimeout(() => setNotifications(null), 3000);
+        }} 
+      />
+
       {/* Danger Zone */}
       <div className="feature-card p-8 border-red-500/20">
         <div className="flex items-center gap-3 mb-6">
@@ -285,47 +277,44 @@ const SettingsPage = () => {
             <p className="font-mono text-sm text-gray-400 mb-4">
               Permanently delete your account and all associated data. This action cannot be undone.
             </p>
-            {!isConfirmingDelete ? (
-              <button
-                onClick={() => setIsConfirmingDelete(true)}
-                className="bg-red-500/20 hover:bg-red-500/30 text-red-300 font-mono text-sm py-2 px-4 rounded-lg transition-colors"
-              >
-                Delete Account
-              </button>
-            ) : (
-              <div className="space-y-4">
-                <div>
-                  <label className="block font-mono text-sm text-red-200/80 mb-2">
-                    {user.hasPassword
-                      ? 'Enter your password to confirm'
-                      : `Type ${DELETE_CONFIRMATION_WORD} to confirm`}
-                  </label>
+            {confirmingDelete ? (
+              <div className="space-y-3">
+                {(user as { hasPassword?: boolean }).hasPassword && (
                   <input
-                    type={user.hasPassword ? 'password' : 'text'}
-                    autoComplete={user.hasPassword ? 'current-password' : 'off'}
-                    value={deleteConfirmation}
-                    onChange={(e) => setDeleteConfirmation(e.target.value)}
-                    className="w-full bg-gray-800/50 border border-red-500/30 rounded-lg px-4 py-3 text-white font-mono placeholder-gray-400 focus:border-red-500/60 focus:outline-none"
-                    placeholder={user.hasPassword ? 'Password' : DELETE_CONFIRMATION_WORD}
+                    type="password"
+                    value={deletePassword}
+                    onChange={(e) => setDeletePassword(e.target.value)}
+                    placeholder="Enter your password to confirm"
+                    className="w-full bg-gray-800/50 border border-red-500/30 rounded-lg px-4 py-3 text-white font-mono placeholder-gray-500 focus:border-red-500/50 focus:outline-none"
                   />
-                </div>
+                )}
+                <p className="font-mono text-xs text-red-300/80">
+                  Confirm deletion: your account and all carbon data will be permanently removed.
+                </p>
                 <div className="flex gap-3">
                   <button
                     onClick={handleDeleteAccount}
-                    disabled={loading.delete || !isDeleteConfirmed}
-                    className="bg-red-600 hover:bg-red-700 text-white font-mono text-sm py-2 px-4 rounded-lg transition-colors disabled:opacity-50"
+                    disabled={deleting}
+                    className="bg-red-500/30 hover:bg-red-500/40 text-red-200 font-mono text-sm py-2 px-4 rounded-lg transition-colors disabled:opacity-50"
                   >
-                    {loading.delete ? 'Deleting...' : 'Permanently Delete Account'}
+                    {deleting ? 'Deleting...' : 'Permanently Delete'}
                   </button>
                   <button
-                    onClick={handleCancelDelete}
-                    disabled={loading.delete}
-                    className="font-mono text-sm text-gray-300 hover:text-white py-2 px-4 transition-colors"
+                    onClick={() => { setConfirmingDelete(false); setDeletePassword(''); }}
+                    disabled={deleting}
+                    className="bg-gray-700/50 hover:bg-gray-700/70 text-white font-mono text-sm py-2 px-4 rounded-lg transition-colors"
                   >
                     Cancel
                   </button>
                 </div>
               </div>
+            ) : (
+              <button
+                onClick={handleDeleteAccount}
+                className="bg-red-500/20 hover:bg-red-500/30 text-red-300 font-mono text-sm py-2 px-4 rounded-lg transition-colors"
+              >
+                Delete Account
+              </button>
             )}
           </div>
         </div>

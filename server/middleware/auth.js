@@ -1,29 +1,39 @@
 import jwt from 'jsonwebtoken';
-import User from '../models/User.js';
+import { usersRepo } from '../db/repos.js';
 
 const auth = async (req, res, next) => {
   try {
     const token = req.header('Authorization')?.replace('Bearer ', '');
-    
+
     if (!token) {
       return res.status(401).json({ error: 'Access denied. No token provided.' });
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    // The full document is loaded once here for routes to reuse; User.toJSON keeps the hash out of responses
-    const user = await User.findById(decoded.userId);
-    
+    // A 2FA challenge proves only the first factor. It must never authorize
+    // ordinary API requests, even when the account's tokenVersion is zero.
+    if (decoded.purpose) {
+      return res.status(401).json({ error: 'Complete two-factor authentication first.' });
+    }
+    const user = await usersRepo.findById(decoded.userId);
+
     if (!user) {
       return res.status(401).json({ error: 'Invalid token. User not found.' });
     }
 
-    // Tokens issued before a password change carry an older version
-    if ((decoded.tokenVersion ?? 0) !== (user.tokenVersion ?? 0)) {
-      return res.status(401).json({ error: 'Session expired. Please sign in again.' });
+    // tokenVersion is bumped whenever the password changes (or is discarded
+    // during Google linking), so any session issued before that must die.
+    const tokenVersion = decoded.tokenVersion || 0;
+    const userVersion = user.tokenVersion || 0;
+    if (tokenVersion !== userVersion) {
+      return res.status(401).json({
+        error: 'Session has been invalidated. Please sign in again.',
+      });
     }
 
-    req.user = user;
-    req.userId = user._id;
+    // Attach a plain, password-stripped user object plus the numeric id.
+    req.user = usersRepo.toSafeUser(user);
+    req.userId = user.id;
     next();
   } catch (error) {
     if (error.name === 'JsonWebTokenError') {
@@ -36,4 +46,4 @@ const auth = async (req, res, next) => {
   }
 };
 
-export default auth; 
+export default auth;

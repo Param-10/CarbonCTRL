@@ -9,28 +9,29 @@ CarbonCTRL is a carbon management web app for tracking emissions, viewing insigh
 
 ## Tech stack
 - Frontend: React, TypeScript, Vite, Tailwind CSS
-- Backend: Node.js, Express, MongoDB
+- Backend: Node.js, Express, SQLite (Drizzle ORM)
 - ML: Python, TensorFlow, scikit-learn
 
 ## Quick start
-1) Install dependencies
+1) Use Node.js 24 and install dependencies
 ```
 npm install
 ```
 
 2) Backend env (server/.env)
 ```
-MONGODB_URI=...          # required
 JWT_SECRET=...           # required, long random string
-PORT=5000
+PORT=3001
 FRONTEND_URL=http://localhost:5173
-GOOGLE_CLIENT_ID=...     # Google OAuth web client ID; Google sign-in is disabled without it
+GOOGLE_CLIENT_ID=...     # optional Google Identity Services web client ID
+RESEND_API_KEY=...       # required only to enable password reset emails
+RESET_FROM_EMAIL=...     # sender on a verified Resend domain
 TRUST_PROXY=1            # production only: number of proxies in front of the API (e.g. Render)
 ```
 
 3) Frontend env (root/.env.local)
 ```
-VITE_API_URL=http://localhost:5000/api
+VITE_API_URL=http://localhost:3001/api
 VITE_GOOGLE_CLIENT_ID=...  # same value as GOOGLE_CLIENT_ID
 ```
 
@@ -44,6 +45,10 @@ npm run dev
 ```
 npm test
 ```
+
+The API creates `server/data/carbonctrl.db` and applies Drizzle migrations at startup. Set `DATABASE_PATH` to use a different SQLite file. The database file is local and gitignored. Existing MongoDB records are **not** imported automatically; back them up and migrate them explicitly before switching a deployment that has live data.
+
+Password reset links are sent only by email. Set both `RESEND_API_KEY` and `RESET_FROM_EMAIL` on the server and verify the sender domain with Resend. Without them, the reset request returns `503` and no token is issued. The API never returns or logs a reset link. The frontend shows a generic success message for existing and unknown emails.
 
 ## ML Models & Limitations
 

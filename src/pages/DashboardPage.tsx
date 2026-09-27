@@ -20,6 +20,7 @@ import {
 import { useCarbonStore } from '../store/carbonStore';
 import { useCompanyStore } from '../store/companyStore';
 import { useAuthStore } from '../store/authStore';
+import { apiClient } from '../lib/api';
 
 // Sectors will be loaded dynamically from backend
 
@@ -101,18 +102,7 @@ const DashboardPage = () => {
     const loadEmissionFactors = async () => {
       try {
         setLoadingFactors(true);
-        const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/gemini/emission-factors`, {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('carbonctrl_token')}`,
-            'Content-Type': 'application/json',
-          },
-        });
-        
-        if (!response.ok) {
-          throw new Error('Failed to fetch emission factors');
-        }
-        
-        const data = await response.json();
+        const data = await apiClient.getEmissionFactors();
         
         // Convert emission factors to the format expected by the frontend
         const sectorsData: Record<string, string[]> = {};

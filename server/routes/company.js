@@ -1,5 +1,5 @@
 import express from 'express';
-import CompanyProfile from '../models/CompanyProfile.js';
+import { profilesRepo } from '../db/repos.js';
 import auth from '../middleware/auth.js';
 
 const router = express.Router();
@@ -8,7 +8,7 @@ const router = express.Router();
 router.get('/profile', auth, async (req, res) => {
   try {
     // New users have no profile yet; that is a normal state, not an error
-    const profile = await CompanyProfile.findOne({ userId: req.userId });
+    const profile = profilesRepo.findByUserId(req.userId);
 
     res.json(profile);
   } catch (error) {
@@ -24,42 +24,21 @@ router.post('/profile', auth, async (req, res) => {
 
     // Validate required fields
     if (!name || !industry || !employees || !location) {
-      return res.status(400).json({ 
-        error: 'Name, industry, employees, and location are required' 
+      return res.status(400).json({
+        error: 'Name, industry, employees, and location are required'
       });
     }
 
-    // Check if profile already exists
-    let profile = await CompanyProfile.findOne({ userId: req.userId });
-
-    if (profile) {
-      // Update existing profile
-      profile.name = name;
-      profile.industry = industry;
-      profile.employees = employees;
-      profile.location = location;
-      profile.phone = phone;
-      profile.email = email;
-      profile.founded = founded;
-      profile.description = description;
-      
-      await profile.save();
-    } else {
-      // Create new profile
-      profile = new CompanyProfile({
-        userId: req.userId,
-        name,
-        industry,
-        employees,
-        location,
-        phone,
-        email,
-        founded,
-        description
-      });
-      
-      await profile.save();
-    }
+    const profile = profilesRepo.upsert(req.userId, {
+      name,
+      industry,
+      employees,
+      location,
+      phone,
+      email,
+      founded,
+      description
+    });
 
     res.json(profile);
   } catch (error) {
@@ -71,23 +50,24 @@ router.post('/profile', auth, async (req, res) => {
 // Update company profile
 router.put('/profile', auth, async (req, res) => {
   try {
-    const profile = await CompanyProfile.findOne({ userId: req.userId });
+    const profile = profilesRepo.findByUserId(req.userId);
 
     if (!profile) {
       return res.status(404).json({ error: 'Company profile not found' });
     }
 
-    // Update fields that are provided
-    const allowedFields = ['name', 'industry', 'employees', 'location', 'phone', 'email', 'founded', 'description'];
-    allowedFields.forEach(field => {
-      if (req.body[field] !== undefined) {
-        profile[field] = req.body[field];
-      }
+    const updated = profilesRepo.updateByUserId(req.userId, {
+      name: req.body.name,
+      industry: req.body.industry,
+      employees: req.body.employees,
+      location: req.body.location,
+      phone: req.body.phone,
+      email: req.body.email,
+      founded: req.body.founded,
+      description: req.body.description
     });
 
-    await profile.save();
-
-    res.json(profile);
+    res.json(updated);
   } catch (error) {
     console.error('Update profile error:', error);
     res.status(500).json({ error: 'Error updating company profile' });
@@ -97,9 +77,9 @@ router.put('/profile', auth, async (req, res) => {
 // Delete company profile
 router.delete('/profile', auth, async (req, res) => {
   try {
-    const profile = await CompanyProfile.findOneAndDelete({ userId: req.userId });
+    const deleted = profilesRepo.deleteByUserId(req.userId);
 
-    if (!profile) {
+    if (!deleted) {
       return res.status(404).json({ error: 'Company profile not found' });
     }
 
@@ -110,4 +90,4 @@ router.delete('/profile', auth, async (req, res) => {
   }
 });
 
-export default router; 
+export default router;

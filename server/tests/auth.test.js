@@ -1,526 +1,544 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
-import jwt from 'jsonwebtoken';
+import speakeasy from 'speakeasy';
+import { setTempDb, cleanUpDb } from './helpers/db.js';
 
-import app from '../app.js';
-import { useTestDatabase } from './helpers/db.js';
-import User from '../models/User.js';
-import CompanyProfile from '../models/CompanyProfile.js';
-import CarbonActivity from '../models/CarbonActivity.js';
-import CarbonAssessment from '../models/CarbonAssessment.js';
-import Emission from '../models/Emission.js';
-import { verifyGoogleIdToken } from '../services/googleAuth.js';
+// ---------------------------------------------------------------------------
+// Order matters: point DATABASE_PATH at a throwaway file and stub Google
+// BEFORE the app/db modules are evaluated. Static imports are resolved first,
+// so these must be dynamic imports (top-level await) below.
+// ---------------------------------------------------------------------------
 
-// Google's token verification is the only external call; everything else runs for real
-vi.mock('../services/googleAuth.js', () => ({
-  isGoogleAuthConfigured: () => true,
-  verifyGoogleIdToken: vi.fn()
-}));
+const dbPath = setTempDb('carbonctrl-auth');
 
-useTestDatabase();
-
-afterEach(() => {
-  vi.clearAllMocks();
-});
-
-const PASSWORD = 'secret123';
-const NAME = 'Ada Lovelace';
-
-const signUp = async (email = 'user@example.com', password = PASSWORD) => {
-  const res = await request(app).post('/api/auth/signup').send({ name: NAME, email, password });
-  expect(res.status).toBe(201);
-  return res.body.token;
-};
-
-const authed = (method, path, token) =>
-  request(app)[method](path).set('Authorization', `Bearer ${token}`);
-
-const googlePayload = (overrides = {}) => ({
-  sub: 'google-sub-123',
-  email: 'jane@gmail.com',
-  email_verified: true,
-  name: 'Jane Doe',
-  given_name: 'Jane',
-  family_name: 'Doe',
-  ...overrides
-});
-
-const googleSignIn = (credential = 'google-id-token', extra = {}) =>
-  request(app).post('/api/auth/google').send({ credential, ...extra });
-
-describe('email/password auth', () => {
-  it('signs in regardless of email casing', async () => {
-    await signUp('Mixed.Case@Example.com');
-
-    const res = await request(app)
-      .post('/api/auth/signin')
-      .send({ email: 'mixed.case@example.com', password: PASSWORD });
-
-    expect(res.status).toBe(200);
-    expect(res.body.token).toBeTruthy();
-  });
-
-  it('rejects non-string credentials instead of querying with them', async () => {
-    await signUp();
-
-    const res = await request(app)
-      .post('/api/auth/signin')
-      .send({ email: { $ne: null }, password: PASSWORD });
-
-    expect(res.status).toBe(400);
-  });
-
-  it('rejects an invalid email address on sign-up', async () => {
-    const res = await request(app)
-      .post('/api/auth/signup')
-      .send({ name: NAME, email: 'not-an-email', password: PASSWORD });
-
-    expect(res.status).toBe(400);
-    expect(await User.countDocuments()).toBe(0);
-  });
-
-  it('rejects passwords longer than bcrypt can hash', async () => {
-    const res = await request(app)
-      .post('/api/auth/signup')
-      .send({ name: NAME, email: 'user@example.com', password: 'a'.repeat(73) });
-
-    expect(res.status).toBe(400);
-    expect(await User.countDocuments()).toBe(0);
-  });
-
-  it('explains that non-Latin characters count extra toward the length limit', async () => {
-    // 30 characters, but 90 bytes in UTF-8
-    const res = await request(app)
-      .post('/api/auth/signup')
-      .send({ name: NAME, email: 'user@example.com', password: '密'.repeat(30) });
-
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/non-Latin characters/);
-  });
-
-  it('returns a clean error when two sign-ups for one email race', async () => {
-    const attempt = () => request(app)
-      .post('/api/auth/signup')
-      .send({ name: NAME, email: 'race@example.com', password: PASSWORD });
-
-    const statuses = (await Promise.all([attempt(), attempt()])).map((res) => res.status).sort();
-
-    expect(statuses).toEqual([201, 400]);
-    expect(await User.countDocuments()).toBe(1);
-  });
-
-  it('stores only a bcrypt hash of the password', async () => {
-    await signUp();
-
-    const user = await User.findOne({ email: 'user@example.com' });
-
-    expect(user.password).not.toBe(PASSWORD);
-    expect(user.password).toMatch(/^\$2[aby]\$12\$/);
-  });
-
-  it('requires a name on sign-up', async () => {
-    for (const name of [undefined, '', '   ', 'x'.repeat(101), { $ne: null }]) {
-      const res = await request(app)
-        .post('/api/auth/signup')
-        .send({ name, email: 'user@example.com', password: PASSWORD });
-      expect(res.status, JSON.stringify(name)).toBe(400);
+// Fake Google OAuth: getToken() returns a fixed id_token and verifyIdToken()
+// returns a payload we can control per test via globalThis.__googlePayload.
+vi.mock('google-auth-library', () => {
+  class MockOAuth2Client {
+    async getToken() {
+      return { tokens: { id_token: 'google-mock-id-token', expires_in: 3600 } };
     }
-    expect(await User.countDocuments()).toBe(0);
-  });
-
-  it('stores the name, trimmed and with single spaces', async () => {
-    const res = await request(app)
-      .post('/api/auth/signup')
-      .send({ name: '  Ada   Lovelace ', email: 'user@example.com', password: PASSWORD });
-
-    expect(res.body.user.name).toBe('Ada Lovelace');
-    expect((await User.findOne({ email: 'user@example.com' })).name).toBe('Ada Lovelace');
-  });
-
-  it('never exposes the password hash or token version in the session payload', async () => {
-    const token = await signUp();
-
-    const res = await authed('get', '/api/auth/session', token);
-
-    expect(res.status).toBe(200);
-    const user = res.body.session.user;
-    expect(user.password).toBeUndefined();
-    expect(user.tokenVersion).toBeUndefined();
-    expect(user.hasPassword).toBe(true);
-  });
-
-  it('does not accept a token signed with a different secret', async () => {
-    const user = await User.create({ email: 'user@example.com', password: PASSWORD });
-    const forged = jwt.sign({ userId: user._id, tokenVersion: 0 }, 'not-the-secret');
-
-    const res = await authed('get', '/api/auth/session', forged);
-
-    expect(res.status).toBe(401);
-  });
+    async verifyIdToken() {
+      const payload = globalThis.__googlePayload;
+      return {
+        getPayload: () => payload,
+      };
+    }
+  }
+  return { OAuth2Client: MockOAuth2Client };
 });
 
-describe('Google sign-in', () => {
-  it('rejects a request without a credential', async () => {
-    const res = await request(app).post('/api/auth/google').send({});
+process.env.GOOGLE_CLIENT_SECRET = 'test-client-secret';
 
-    expect(res.status).toBe(400);
-    expect(verifyGoogleIdToken).not.toHaveBeenCalled();
-  });
+const { default: app } = await import('../app.js');
+const { sqlite } = await import('../db/index.js');
 
-  it('rejects a credential Google does not verify and creates no user', async () => {
-    verifyGoogleIdToken.mockRejectedValue(new Error('Wrong number of segments'));
+const agent = request(app);
 
-    const res = await googleSignIn('junk');
+const signup = (email, password, firstName = 'First', lastName = 'Last') =>
+  agent
+    .post('/api/auth/signup')
+    .send({ email, password, name: `${firstName} ${lastName}` });
 
-    expect(res.status).toBe(401);
-    expect(res.body.token).toBeUndefined();
-    expect(await User.countDocuments()).toBe(0);
-  });
+const signin = (email, password) =>
+  agent.post('/api/auth/signin').send({ email, password });
 
-  it('falls back to given and family name when Google sends no full name', async () => {
-    verifyGoogleIdToken.mockResolvedValue(googlePayload({ name: undefined }));
+const session = (token) =>
+  agent.get('/api/auth/session').set('Authorization', `Bearer ${token}`);
 
-    const res = await googleSignIn();
+const googleSignIn = (body) => agent.post('/api/auth/google').send(body);
 
-    expect(res.body.user.name).toBe('Jane Doe');
-  });
+const totp = (secret) => speakeasy.totp({ secret, encoding: 'base32' });
 
-  it('rejects a Google account whose email is not verified', async () => {
-    verifyGoogleIdToken.mockResolvedValue(googlePayload({ email_verified: false }));
+const googlePayload = (sub, email) => ({
+  sub,
+  email,
+  email_verified: true,
+  given_name: 'Goog',
+  family_name: 'Le',
+  name: 'Goog Le',
+});
 
-    const res = await googleSignIn();
+describe('auth flows (SQLite)', () => {
+  let aliceToken;
 
-    expect(res.status).toBe(401);
-    expect(await User.countDocuments()).toBe(0);
-  });
-
-  it('creates the user from the Google profile on first sign-in', async () => {
-    verifyGoogleIdToken.mockResolvedValue(googlePayload());
-
-    const res = await googleSignIn();
-
-    expect(res.status).toBe(200);
+  it('signs up a new account and can read its session', async () => {
+    const res = await signup('alice@example.com', 'StrongPass1!', 'Alice', 'Wilson');
+    expect(res.status).toBe(201);
     expect(res.body.token).toBeTruthy();
-    expect(res.body.user).toMatchObject({
-      email: 'jane@gmail.com',
-      name: 'Jane Doe',
-      isEmailVerified: true,
-      hasPassword: false
-    });
-    expect(res.body.user.lastLogin).toBeTruthy();
+    expect(res.body.user.email).toBe('alice@example.com');
+    expect(res.body.user.name).toBe('Alice Wilson');
+    expect(res.body.user.password).toBeUndefined();
+    expect(res.body.user.id).toBeDefined();
+    aliceToken = res.body.token;
+
+    const s = await session(aliceToken);
+    expect(s.status).toBe(200);
+    expect(s.body.session.user.email).toBe('alice@example.com');
   });
 
-  it('returns the same account on every sign-in with the same Google account', async () => {
-    verifyGoogleIdToken.mockResolvedValue(googlePayload());
-
-    const first = await googleSignIn();
-    const second = await googleSignIn();
-
-    expect(second.body.user._id).toBe(first.body.user._id);
-    expect(await User.countDocuments()).toBe(1);
-  });
-
-  it('asks for the password before linking Google to an email sign-up, and changes nothing', async () => {
-    await signUp('jane@gmail.com');
-    verifyGoogleIdToken.mockResolvedValue(googlePayload({ email: 'Jane@Gmail.com' }));
-
-    const res = await googleSignIn();
-
-    expect(res.status).toBe(409);
-    expect(res.body.code).toBe('LINK_PASSWORD_REQUIRED');
-    expect(res.body.token).toBeUndefined();
-    const user = await User.findOne({ email: 'jane@gmail.com' });
-    expect(user.googleId).toBeUndefined();
-    expect(user.isEmailVerified).toBe(false);
-  });
-
-  it('links Google and keeps the password and other sessions when the owner confirms it', async () => {
-    const passwordToken = await signUp('jane@gmail.com');
-    verifyGoogleIdToken.mockResolvedValue(googlePayload());
-
-    const res = await googleSignIn('google-id-token', { password: PASSWORD });
-
-    expect(res.status).toBe(200);
-    expect(res.body.user).toMatchObject({ hasPassword: true, isEmailVerified: true });
-    expect(res.body.user.lastLogin).toBeTruthy();
-    expect(await User.countDocuments()).toBe(1);
-    expect((await User.findOne({ email: 'jane@gmail.com' })).googleId).toBe('google-sub-123');
-
-    const passwordSignIn = await request(app)
-      .post('/api/auth/signin')
-      .send({ email: 'jane@gmail.com', password: PASSWORD });
-    expect(passwordSignIn.status).toBe(200);
-    expect((await authed('get', '/api/auth/session', passwordToken)).status).toBe(200);
-  });
-
-  it('rejects a wrong password when linking and links nothing', async () => {
-    await signUp('jane@gmail.com');
-    verifyGoogleIdToken.mockResolvedValue(googlePayload());
-
-    const res = await googleSignIn('google-id-token', { password: 'wrong-pass' });
-
+  it('rejects duplicate signups', async () => {
+    const res = await signup('alice@example.com', 'AnotherPass1!');
     expect(res.status).toBe(400);
-    expect(res.body.code).toBe('LINK_PASSWORD_REQUIRED');
-    expect((await User.findOne({ email: 'jane@gmail.com' })).googleId).toBeUndefined();
   });
 
-  it('locks out whoever registered the email first when the Google owner continues without the password', async () => {
-    // An attacker signs up with the victim's address before the victim ever uses the app
-    const attackerToken = await signUp('jane@gmail.com', 'attacker-pass');
-    verifyGoogleIdToken.mockResolvedValue(googlePayload());
+  it('rejects weak and oversized passwords', async () => {
+    const weak = await signup('weak@example.com', 'short');
+    expect(weak.status).toBe(400);
 
-    const res = await googleSignIn('google-id-token', { discardPassword: true });
+    const oversized = await signup('big@example.com', 'x'.repeat(80));
+    expect(oversized.status).toBe(400);
+  });
 
+  it('requires the name and validates the email at signup', async () => {
+    const noName = await agent.post('/api/auth/signup').send({ email: 'name@example.com', password: 'StrongPass1!' });
+    expect(noName.status).toBe(400);
+    const badEmail = await agent.post('/api/auth/signup').send({ name: 'Name', email: 'invalid', password: 'StrongPass1!' });
+    expect(badEmail.status).toBe(400);
+  });
+
+  it('rejects bad credentials', async () => {
+    const res = await signin('alice@example.com', 'WrongPass1!');
+    expect(res.status).toBe(401);
+    expect(res.body.error).toMatch(/invalid/i);
+  });
+
+  it('returns 200 + null for a profile-less user (no premature 404)', async () => {
+    const res = await agent
+      .get('/api/company/profile')
+      .set('Authorization', `Bearer ${aliceToken}`);
     expect(res.status).toBe(200);
-    expect(res.body.user.hasPassword).toBe(false);
-
-    const passwordSignIn = await request(app)
-      .post('/api/auth/signin')
-      .send({ email: 'jane@gmail.com', password: 'attacker-pass' });
-    expect(passwordSignIn.status).toBe(401);
-
-    const oldSession = await authed('get', '/api/auth/session', attackerToken);
-    expect(oldSession.status).toBe(401);
-
-    const googleSession = await authed('get', '/api/auth/session', res.body.token);
-    expect(googleSession.status).toBe(200);
+    // res.json(undefined) sends an empty body; supertest parses it as {} — the
+    // point is that a missing profile is 200 (new-user state), not a 404.
+    expect(res.body).not.toHaveProperty('name');
+    expect(res.body).not.toHaveProperty('id');
   });
 
-  it('only discards the password for an explicit boolean true', async () => {
-    await signUp('jane@gmail.com');
-    verifyGoogleIdToken.mockResolvedValue(googlePayload());
+  it('creates and reads back a company profile', async () => {
+    const profile = {
+      name: 'Alice Industries',
+      industry: 'Manufacturing',
+      employees: '50',
+      location: 'Austin, TX',
+      phone: '+1-555-0100',
+      email: 'alice@example.com',
+      founded: '2015',
+      description: 'Widgets',
+    };
+    const created = await agent
+      .post('/api/company/profile')
+      .set('Authorization', `Bearer ${aliceToken}`)
+      .send(profile);
+    expect([200, 201]).toContain(created.status);
 
-    const res = await googleSignIn('google-id-token', { discardPassword: 'true' });
-
-    expect(res.status).toBe(409);
-    expect((await User.findOne({ email: 'jane@gmail.com' })).password).toBeTruthy();
+    const got = await agent
+      .get('/api/company/profile')
+      .set('Authorization', `Bearer ${aliceToken}`);
+    expect(got.status).toBe(200);
+    expect(got.body.name).toBe('Alice Industries');
+    expect(got.body.userId ?? got.body.user_id).toBe(resolveUserId(aliceToken));
   });
 
-  it('keeps the password when linking an account whose email is already verified', async () => {
-    await signUp('jane@gmail.com');
-    await User.updateOne({ email: 'jane@gmail.com' }, { isEmailVerified: true });
-    verifyGoogleIdToken.mockResolvedValue(googlePayload());
-
-    const res = await googleSignIn();
-
-    expect(res.status).toBe(200);
-    expect(res.body.user.hasPassword).toBe(true);
+  it('rejects unauthenticated profile access', async () => {
+    const res = await agent.get('/api/company/profile');
+    expect(res.status).toBe(401);
   });
 
-  it('returns the account created by a simultaneous first Google sign-in instead of failing', async () => {
-    verifyGoogleIdToken.mockResolvedValue(googlePayload());
-    // Let another request create the user just before this one's insert runs
-    const createUser = User.create.bind(User);
-    const createSpy = vi.spyOn(User, 'create').mockImplementationOnce(async (doc) => {
-      await createUser(doc);
-      return createUser(doc);
+  describe('2FA enforcement', () => {
+    let token;
+    let secret;
+
+    beforeAll(async () => {
+      const res = await signup('mfa@example.com', 'StrongPass2!', 'Mfa', 'User');
+      token = res.body.token;
     });
 
-    try {
-      const res = await googleSignIn();
+    it('sign-in works without 2FA initially', async () => {
+      const res = await signin('mfa@example.com', 'StrongPass2!');
+      expect(res.body.requiresTwoFactor).toBeUndefined();
+      expect(res.body.token).toBeTruthy();
+    });
+
+    it('sets up a secret', async () => {
+      const res = await agent
+        .post('/api/auth/2fa/setup')
+        .set('Authorization', `Bearer ${token}`);
+      expect(res.status).toBe(200);
+      expect(res.body.secret).toBeTruthy();
+      expect(res.body.qrCode).toMatch(/^data:image\/png;base64,/);
+      secret = res.body.secret;
+    });
+
+    it('verifies and enables 2FA from a TOTP code', async () => {
+      const res = await agent
+        .post('/api/auth/2fa/verify')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ token: totp(secret), secret });
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+
+    it('rejects a verify without the echoed secret', async () => {
+      const res = await agent
+        .post('/api/auth/2fa/verify')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ token: totp(secret) });
+      expect(res.status).toBe(400);
+    });
+
+    it('then requires a challenge at sign-in and rejects a wrong code', async () => {
+      const challenge = await signin('mfa@example.com', 'StrongPass2!');
+      expect(challenge.body.requiresTwoFactor).toBe(true);
+      expect(challenge.body.twoFactorToken).toBeTruthy();
+
+      const bypass = await session(challenge.body.twoFactorToken);
+      expect(bypass.status).toBe(401);
+
+      const bad = await agent
+        .post('/api/auth/signin/2fa')
+        .send({ twoFactorToken: challenge.body.twoFactorToken, code: '000000' });
+      expect(bad.status).toBe(400);
+    });
+
+    it('completes sign-in with the correct code', async () => {
+      const challenge = await signin('mfa@example.com', 'StrongPass2!');
+      const res = await agent
+        .post('/api/auth/signin/2fa')
+        .send({ twoFactorToken: challenge.body.twoFactorToken, code: totp(secret) });
+      expect(res.status).toBe(200);
+      expect(res.body.token).toBeTruthy();
+    });
+
+    it('disables 2FA with the current code and restores direct sign-in', async () => {
+      const res = await agent
+        .post('/api/auth/2fa/disable')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ token: totp(secret) });
+      expect(res.status).toBe(200);
+
+      const direct = await signin('mfa@example.com', 'StrongPass2!');
+      expect(direct.body.requiresTwoFactor).toBeUndefined();
+    });
+  });
+
+  describe('tokenVersion session invalidation', () => {
+    let oldToken;
+    let freshToken;
+
+    beforeAll(async () => {
+      const res = await signup('bob@example.com', 'OldPass1!', 'Bob', 'Smith');
+      oldToken = res.body.token;
+    });
+
+    it('changing the password invalidates old sessions (401) and issues a fresh token', async () => {
+      const res = await agent
+        .put('/api/auth/user')
+        .set('Authorization', `Bearer ${oldToken}`)
+        .send({ password: 'NewPass1!', currentPassword: 'OldPass1!' });
 
       expect(res.status).toBe(200);
-      expect(res.body.user.email).toBe('jane@gmail.com');
-      expect(await User.countDocuments()).toBe(1);
-    } finally {
-      createSpy.mockRestore();
-    }
+      expect(res.body.token).toBeTruthy();
+      freshToken = res.body.token;
+
+      const old = await session(oldToken);
+      expect(old.status).toBe(401);
+
+      const now = await session(freshToken);
+      expect(now.status).toBe(200);
+    });
+
+    it('rejects a password change with the wrong current password', async () => {
+      const res = await agent
+        .put('/api/auth/user')
+        .set('Authorization', `Bearer ${freshToken}`)
+        .send({ password: 'OtherPass1!', currentPassword: 'Wrong' });
+      expect(res.status).toBe(400);
+    });
   });
 
-  it('refuses to link an email already linked to a different Google account', async () => {
-    verifyGoogleIdToken.mockResolvedValue(googlePayload());
-    await googleSignIn();
-
-    verifyGoogleIdToken.mockResolvedValue(googlePayload({ sub: 'another-google-sub' }));
-    const res = await googleSignIn();
-
-    expect(res.status).toBe(409);
-    expect(await User.countDocuments()).toBe(1);
+  it('does not issue password reset links without an email provider', async () => {
+    const res = await agent.post('/api/auth/forgot-password').send({ email: 'bob@example.com' });
+    expect(res.status).toBe(503);
+    expect(res.body.resetUrl).toBeUndefined();
   });
 
-  it('does not let a Google-only account sign in with a password', async () => {
-    verifyGoogleIdToken.mockResolvedValue(googlePayload());
-    await googleSignIn();
+  describe('password reset', () => {
+    let resetUrl;
+    let emailRequest;
 
-    const res = await request(app)
-      .post('/api/auth/signin')
-      .send({ email: 'jane@gmail.com', password: 'anything' });
+    beforeAll(() => {
+      process.env.RESEND_API_KEY = 'test-api-key';
+      process.env.RESET_FROM_EMAIL = 'CarbonCTRL <reset@example.com>';
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options) => {
+        emailRequest = { url, options };
+        return { ok: true, status: 200 };
+      });
+    });
 
-    expect(res.status).toBe(401);
+    it('issues a reset link for an existing account', async () => {
+      const res = await agent
+        .post('/api/auth/forgot-password')
+        .send({ email: 'bob@example.com' });
+      expect(res.status).toBe(200);
+      expect(res.body.resetUrl).toBeUndefined();
+      expect(emailRequest.url).toBe('https://api.resend.com/emails');
+      const message = JSON.parse(emailRequest.options.body);
+      expect(message.to).toEqual(['bob@example.com']);
+      resetUrl = message.text.match(/https?:\/\/\S+#token=\S+/)[0];
+    });
+
+    it('does not reveal whether an email exists', async () => {
+      const res = await agent
+        .post('/api/auth/forgot-password')
+        .send({ email: 'nobody@example.com' });
+      expect(res.status).toBe(200);
+      expect(res.body.resetUrl).toBeUndefined();
+    });
+
+    it('resets the password and invalidates earlier sessions', async () => {
+      const token = new URLSearchParams(new URL(resetUrl).hash.slice(1)).get('token');
+
+      const res = await agent
+        .post('/api/auth/reset-password')
+        .send({ token, password: 'ResetPass1!' });
+      expect(res.status).toBe(200);
+
+      const direct = await signin('bob@example.com', 'ResetPass1!');
+      expect(direct.status).toBe(200);
+      expect(direct.body.token).toBeTruthy();
+    });
+
+    it('rejects an expired or fake token', async () => {
+      const res = await agent
+        .post('/api/auth/reset-password')
+        .send({ token: 'not-a-real-token', password: 'Whatever1!' });
+      expect(res.status).toBe(400);
+    });
+
+    afterAll(() => {
+      vi.restoreAllMocks();
+      delete process.env.RESEND_API_KEY;
+      delete process.env.RESET_FROM_EMAIL;
+    });
+  });
+
+  describe('Google account linking', () => {
+    let googleToken;
+    it('creates a new account from a verified Google token', async () => {
+      globalThis.__googlePayload = googlePayload('sub-new', 'gnew@example.com');
+      const res = await googleSignIn({ credential: 'google-mock-id-token' });
+      expect(res.status).toBe(200);
+      expect(res.body.token).toBeTruthy();
+      expect(res.body.user.email).toBe('gnew@example.com');
+      googleToken = res.body.token;
+    });
+
+    it('requires 2FA after Google sign-in when enabled', async () => {
+      const setup = await agent.post('/api/auth/2fa/setup')
+        .set('Authorization', `Bearer ${googleToken}`);
+      expect(setup.status).toBe(200);
+      const secret = setup.body.secret;
+      const enabled = await agent.post('/api/auth/2fa/verify')
+        .set('Authorization', `Bearer ${googleToken}`)
+        .send({ token: totp(secret), secret });
+      expect(enabled.status).toBe(200);
+
+      globalThis.__googlePayload = googlePayload('sub-new', 'gnew@example.com');
+      const challenge = await googleSignIn({ googleToken: 'mock-auth-code' });
+      expect(challenge.status).toBe(200);
+      expect(challenge.body.token).toBeUndefined();
+      expect(challenge.body.requiresTwoFactor).toBe(true);
+      expect((await session(challenge.body.twoFactorToken)).status).toBe(401);
+      const completed = await agent.post('/api/auth/signin/2fa')
+        .send({ twoFactorToken: challenge.body.twoFactorToken, code: totp(secret) });
+      expect(completed.status).toBe(200);
+      expect(completed.body.token).toBeTruthy();
+    });
+
+    it('requires the existing password before linking (LINK_PASSWORD_REQUIRED)', async () => {
+      await signup('linky@example.com', 'LinkPass1!', 'Linky', 'User');
+
+      globalThis.__googlePayload = googlePayload('sub-linky', 'linky@example.com');
+
+      const first = await googleSignIn({ googleToken: 'mock-auth-code' });
+      expect(first.status).toBe(409);
+      expect(first.body.code).toBe('LINK_PASSWORD_REQUIRED');
+      expect(first.body.idToken).toBeTruthy();
+
+      // Retry with the correct password (the ID token is reusable; codes are single-use)
+      const linked = await googleSignIn({
+        idToken: first.body.idToken,
+        password: 'LinkPass1!',
+      });
+      expect(linked.status).toBe(200);
+
+      // The account now logs in via Google for verification
+      globalThis.__googlePayload = googlePayload('sub-linky', 'linky@example.com');
+      const again = await googleSignIn({ googleToken: 'mock-auth-code' });
+      expect(again.status).toBe(200);
+    });
+
+    it('waits for 2FA before linking Google to a protected account', async () => {
+      const created = await signup('protected-link@example.com', 'LinkPass1!', 'Protected', 'User');
+      const setup = await agent.post('/api/auth/2fa/setup')
+        .set('Authorization', `Bearer ${created.body.token}`);
+      const secret = setup.body.secret;
+      await agent.post('/api/auth/2fa/verify')
+        .set('Authorization', `Bearer ${created.body.token}`)
+        .send({ token: totp(secret), secret });
+
+      globalThis.__googlePayload = googlePayload('sub-protected-link', 'protected-link@example.com');
+      const first = await googleSignIn({ credential: 'google-mock-id-token' });
+      expect(first.body.code).toBe('LINK_PASSWORD_REQUIRED');
+      const challenge = await googleSignIn({ idToken: first.body.idToken, password: 'LinkPass1!' });
+      expect(challenge.body.requiresTwoFactor).toBe(true);
+      const { usersRepo } = await import('../db/repos.js');
+      expect(usersRepo.findByEmail('protected-link@example.com').googleId).toBeNull();
+
+      const completed = await agent.post('/api/auth/signin/2fa')
+        .send({ twoFactorToken: challenge.body.twoFactorToken, code: totp(secret) });
+      expect(completed.status).toBe(200);
+      expect(completed.body.token).toBeTruthy();
+      expect(usersRepo.findByEmail('protected-link@example.com').googleId).toBe('sub-protected-link');
+    });
+
+    it('rejects an incorrect password during linking', async () => {
+      await signup('linky2@example.com', 'LinkPass2!', 'Linky2', 'User');
+      globalThis.__googlePayload = googlePayload('sub-linky2', 'linky2@example.com');
+
+      const first = await googleSignIn({ googleToken: 'mock-auth-code' });
+      expect(first.body.code).toBe('LINK_PASSWORD_REQUIRED');
+
+      const bad = await googleSignIn({
+        idToken: first.body.idToken,
+        password: 'WrongPass2!',
+      });
+      expect(bad.status).toBe(409);
+      expect(bad.body.code).toBe('LINK_PASSWORD_REQUIRED');
+    });
+
+    it('discarding the password links the account and kills password sessions', async () => {
+      const created = await signup('discard@example.com', 'DiscardPass1!', 'Dis', 'Card');
+      const oldToken = created.body.token;
+
+      globalThis.__googlePayload = googlePayload('sub-discard', 'discard@example.com');
+      const first = await googleSignIn({ googleToken: 'mock-auth-code' });
+      expect(first.body.code).toBe('LINK_PASSWORD_REQUIRED');
+
+      const linked = await googleSignIn({
+        idToken: first.body.idToken,
+        discardPassword: true,
+      });
+      expect(linked.status).toBe(200);
+
+      // Password logins are gone and every old JWT is invalidated
+      const old = await session(oldToken);
+      expect(old.status).toBe(401);
+
+      const pwSignin = await signin('discard@example.com', 'DiscardPass1!');
+      expect(pwSignin.status).toBe(401);
+
+      // But Google sign-in works
+      globalThis.__googlePayload = googlePayload('sub-discard', 'discard@example.com');
+      const again = await googleSignIn({ googleToken: 'mock-auth-code' });
+      expect(again.status).toBe(200);
+    });
+
+    it('blocks linking an email already claimed by another Google account', async () => {
+      // Claim goat@example.com with google sub-a via direct link
+      await signup('goat@example.com', 'GoatPass1!', 'Goat', 'User');
+      globalThis.__googlePayload = googlePayload('sub-goat-a', 'goat@example.com');
+      const first = await googleSignIn({ googleToken: 'mock-auth-code' });
+      const linked = await googleSignIn({
+        idToken: first.body.idToken,
+        password: 'GoatPass1!',
+      });
+      expect(linked.status).toBe(200);
+
+      // Different Google identity, same email
+      globalThis.__googlePayload = googlePayload('sub-goat-b', 'goat@example.com');
+      const conflict = await googleSignIn({ googleToken: 'mock-auth-code' });
+      expect(conflict.status).toBe(409);
+      expect(conflict.body.code).toBe('GOOGLE_EMAIL_LINKED');
+    });
+
+    it('rejects Google payloads whose email is not verified', async () => {
+      globalThis.__googlePayload = {
+        sub: 'sub-unverified',
+        email: 'unverified@example.com',
+        email_verified: false,
+        name: 'Unverified',
+      };
+      const res = await googleSignIn({ googleToken: 'mock-auth-code' });
+      expect(res.status).toBe(401);
+    });
+
+    afterAll(() => {
+      delete globalThis.__googlePayload;
+    });
+  });
+
+  describe('account deletion', () => {
+    let token;
+    let userId;
+
+    beforeAll(async () => {
+      const res = await signup('delete-me@example.com', 'DeletePass1!', 'Del', 'Eteme');
+      token = res.body.token;
+      userId = res.body.user.id;
+    });
+
+    it('requires the password to delete an account', async () => {
+      const noPass = await agent
+        .delete('/api/auth/account')
+        .set('Authorization', `Bearer ${token}`);
+      expect(noPass.status).toBe(400);
+
+      const wrongPass = await agent
+        .delete('/api/auth/account')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ password: 'WrongPass' });
+      expect(wrongPass.status).toBe(400);
+    });
+
+    it('deletes the account and revokes the session', async () => {
+      const res = await agent
+        .delete('/api/auth/account')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ password: 'DeletePass1!' });
+      expect(res.status).toBe(200);
+
+      const s = await session(token);
+      expect(s.status).toBe(401);
+
+      const { usersRepo } = await import('../db/repos.js');
+      expect(usersRepo.findById(userId)).toBeUndefined();
+    });
+  });
+
+  describe('health + infrastructure', () => {
+    it('reports SQLite as connected', async () => {
+      const res = await agent.get('/health');
+      expect(res.status).toBe(200);
+      expect(res.body.status).toBe('OK');
+      expect(res.body.database).toBe('connected');
+      expect(res.body.storage).toBe('sqlite');
+    });
+
+    it('404s unknown routes as JSON', async () => {
+      const res = await agent.get('/api/nope');
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBeTruthy();
+    });
+  });
+
+  afterAll(() => {
+    sqlite.close();
+    cleanUpDb(dbPath);
   });
 });
 
-describe('password change', () => {
-  it('rejects a new password without the current password', async () => {
-    const token = await signUp();
-
-    const res = await authed('put', '/api/auth/user', token).send({ password: 'newpass123' });
-
-    expect(res.status).toBe(400);
-  });
-
-  it('rejects a wrong current password', async () => {
-    const token = await signUp();
-
-    const res = await authed('put', '/api/auth/user', token)
-      .send({ password: 'newpass123', currentPassword: 'wrong-password' });
-
-    expect(res.status).toBe(400);
-  });
-
-  it('changes the password when the current password is correct', async () => {
-    const token = await signUp();
-
-    const res = await authed('put', '/api/auth/user', token)
-      .send({ password: 'newpass123', currentPassword: PASSWORD });
-    expect(res.status).toBe(200);
-
-    const signIn = await request(app)
-      .post('/api/auth/signin')
-      .send({ email: 'user@example.com', password: 'newpass123' });
-    expect(signIn.status).toBe(200);
-  });
-
-  it('signs out other sessions and returns a working token to the caller', async () => {
-    const token = await signUp();
-    const otherDevice = (await request(app)
-      .post('/api/auth/signin')
-      .send({ email: 'user@example.com', password: PASSWORD })).body.token;
-
-    const res = await authed('put', '/api/auth/user', token)
-      .send({ password: 'newpass123', currentPassword: PASSWORD });
-
-    expect(res.body.token).toBeTruthy();
-    expect((await authed('get', '/api/auth/session', res.body.token)).status).toBe(200);
-    expect((await authed('get', '/api/auth/session', token)).status).toBe(401);
-    expect((await authed('get', '/api/auth/session', otherDevice)).status).toBe(401);
-  });
-
-  it('keeps sessions and returns no token when only the name changes', async () => {
-    const token = await signUp();
-
-    const res = await authed('put', '/api/auth/user', token).send({ name: 'Ada King' });
-
-    expect(res.status).toBe(200);
-    expect(res.body.token).toBeUndefined();
-    expect((await authed('get', '/api/auth/session', token)).status).toBe(200);
-  });
-
-  it('updates the name and rejects a blank one', async () => {
-    const token = await signUp();
-
-    const blank = await authed('put', '/api/auth/user', token).send({ name: '  ' });
-    expect(blank.status).toBe(400);
-
-    const res = await authed('put', '/api/auth/user', token).send({ name: 'Ada King' });
-    expect(res.status).toBe(200);
-    expect(res.body.user.name).toBe('Ada King');
-  });
-
-  it('lets a Google-only user set a first password without a current one', async () => {
-    verifyGoogleIdToken.mockResolvedValue(googlePayload());
-    const google = await googleSignIn();
-
-    const res = await authed('put', '/api/auth/user', google.body.token).send({ password: 'newpass123' });
-
-    expect(res.status).toBe(200);
-    expect(res.body.user.hasPassword).toBe(true);
-  });
-});
-
-describe('account deletion', () => {
-  const seedUserData = async (token) => {
-    await authed('post', '/api/company/profile', token)
-      .send({ name: 'Acme', industry: 'Technology', employees: '11-50', location: 'Austin, TX' });
-    await authed('post', '/api/carbon/activity', token)
-      .send({ sector: 'power', subsector: 'electricity-generation', activityAmount: 100, activityUnit: 'kWh' });
-    const assessment = await authed('get', '/api/carbon/assessment', token);
-    await authed('put', `/api/carbon/assessment/${assessment.body._id}`, token)
-      .send({ totalEmissions: 45, grade: 'B', emissionsBreakdown: { power: 45 } });
-  };
-
-  it('keeps everything when the password is wrong', async () => {
-    const token = await signUp();
-    await seedUserData(token);
-
-    const res = await authed('delete', '/api/auth/user', token).send({ password: 'wrong-password' });
-
-    expect(res.status).toBe(400);
-    expect(await User.countDocuments()).toBe(1);
-    expect(await CarbonActivity.countDocuments()).toBe(1);
-  });
-
-  it('deletes the user and all of their data, and only theirs', async () => {
-    const token = await signUp();
-    await seedUserData(token);
-    const otherToken = await signUp('other@example.com');
-    await seedUserData(otherToken);
-
-    const res = await authed('delete', '/api/auth/user', token).send({ password: PASSWORD });
-
-    expect(res.status).toBe(200);
-    expect(await User.countDocuments()).toBe(1);
-    expect(await CompanyProfile.countDocuments()).toBe(1);
-    expect(await CarbonActivity.countDocuments()).toBe(1);
-    expect(await CarbonAssessment.countDocuments()).toBe(1);
-    // The other user's breakdown row plus their total row
-    expect(await Emission.countDocuments()).toBe(2);
-
-    const session = await authed('get', '/api/auth/session', token);
-    expect(session.status).toBe(401);
-  });
-
-  it('lets a Google-only user delete their account', async () => {
-    verifyGoogleIdToken.mockResolvedValue(googlePayload());
-    const google = await googleSignIn();
-
-    const res = await authed('delete', '/api/auth/user', google.body.token).send({});
-
-    expect(res.status).toBe(200);
-    expect(await User.countDocuments()).toBe(0);
-  });
-});
-
-describe('documents written by older versions', () => {
-  it('shows a name built from the old first and last name fields', async () => {
-    const token = await signUp();
-    await User.collection.updateOne(
-      { email: 'user@example.com' },
-      { $unset: { name: '' }, $set: { firstName: 'Grace', lastName: 'Hopper' } }
-    );
-
-    const res = await authed('get', '/api/auth/session', token);
-
-    expect(res.body.session.user.name).toBe('Grace Hopper');
-    expect(res.body.session.user.firstName).toBeUndefined();
-  });
-});
-
-describe('removed two-factor authentication', () => {
-  it('no longer exposes 2FA endpoints', async () => {
-    const token = await signUp();
-
-    for (const path of ['/api/auth/2fa/setup', '/api/auth/2fa/verify', '/api/auth/2fa/disable', '/api/auth/2fa/login']) {
-      const res = await authed('post', path, token).send({});
-      expect(res.status, path).toBe(404);
-    }
-  });
-
-  it('signs in accounts that had 2FA enabled before it was removed', async () => {
-    await signUp();
-    // Simulate a document written while 2FA existed
-    await User.collection.updateOne(
-      { email: 'user@example.com' },
-      { $set: { twoFactorEnabled: true, twoFactorSecret: 'LEGACYSECRET' } }
-    );
-
-    const res = await request(app)
-      .post('/api/auth/signin')
-      .send({ email: 'user@example.com', password: PASSWORD });
-
-    expect(res.status).toBe(200);
-    expect(res.body.token).toBeTruthy();
-    expect(res.body.user.twoFactorSecret).toBeUndefined();
-    expect(res.body.user.twoFactorEnabled).toBeUndefined();
-  });
-});
+/** Extract the numeric user id embedded in a JWT (test helper only). */
+function resolveUserId(token) {
+  return JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).userId;
+}

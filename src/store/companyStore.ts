@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { apiClient } from '../lib/api';
+import { useAuthStore } from './authStore';
 
 export interface CompanyProfile {
   _id?: string;
@@ -15,56 +16,111 @@ export interface CompanyProfile {
 
 interface CompanyState {
   profile: CompanyProfile | null;
-  // True once the profile has been fetched, even if the user has none yet
-  loaded: boolean;
   loading: boolean;
+  /** True once a profile lookup has completed (found, not-found, or failed).
+   *  Lets ProtectedRoute avoid a premature redirect before the first fetch
+   *  finishes. */
+  loaded: boolean;
   error: Error | null;
+  /** id of the user the cached profile belongs to. When the signed-in user
+   *  changes (or signs out), the cache is invalidated and refetched so one
+   *  account's data never bleeds into another's session. */
+  profileUserId: string | number | null;
   fetchProfile: () => Promise<void>;
   updateProfile: (profile: CompanyProfile) => Promise<void>;
   reset: () => void;
 }
 
-const initialState = {
-  profile: null,
-  loaded: false,
-  loading: false,
-  error: null,
-};
-
 export const useCompanyStore = create<CompanyState>((set, get) => ({
-  ...initialState,
+  profile: null,
+  loading: false,
+  loaded: false,
+  error: null,
+  profileUserId: null,
 
   fetchProfile: async () => {
-    const { loaded, loading, error } = get();
-    // Skip if a fetch is in flight or already succeeded; after an error (e.g. a failed save), refetch
-    if (loading || (loaded && !error)) return;
+    const user = useAuthStore.getState().user;
+    const uid = user ? (user.id ?? (user as { _id?: string | number })._id ?? null) : null;
+    const { profile, profileUserId } = get();
 
-    set({ loading: true, error: null });
+    // Fast path: the cached profile already belongs to the current user.
+    if (profile && profileUserId !== null && profileUserId === uid) {
+      set({ loaded: true });
+      return;
+    }
 
+    // Cached profile belongs to a different user (or there is none): clear it
+    // so the UI never renders another account's data while we refetch.
+    set({ loading: true, error: null, profile: null });
+    
     try {
-      const data = await apiClient.getCompanyProfile();
-      set({ profile: data, loaded: true, loading: false, error: null });
+      // Get current user from auth store
+      const user = useAuthStore.getState().user;
+      
+      if (!user) {
+        console.error('Cannot fetch profile: No user logged in');
+        set({ loading: false, loaded: true });
+        return;
+      }
+      
+      console.log('Fetching company profile for user:', user.id);
+      
+      try {
+        const data = await apiClient.getCompanyProfile();
+        
+        if (!data) {
+          console.log('No company profile found for user');
+          // No profile found, but not an error
+          set({ profile: null, profileUserId: null, loading: false, error: null, loaded: true });
+          return;
+        }
+        
+        console.log('Successfully loaded company profile:', data);
+        set({ profile: data, profileUserId: uid, loading: false, error: null, loaded: true });
+      } catch (fetchError) {
+        console.error('Network or API error in fetchProfile:', fetchError);
+        // Treat as "checked" so the UI doesn't spin forever; redirect logic
+        // will still show the company profile page when nothing is found.
+        set({ loading: false, error: null, loaded: true });
+      }
     } catch (error) {
-      // Leave loaded false so a retry fetches again
-      console.error('Error fetching company profile:', error);
-      const errorMessage = error instanceof Error ? error : new Error('Unknown error');
-      set({ loading: false, error: errorMessage });
+      console.error('Unexpected error in fetchProfile:', error);
+      set({ loading: false, loaded: true });
     }
   },
 
   updateProfile: async (profileData: CompanyProfile) => {
     set({ loading: true, error: null });
-
+    
     try {
+      // Get current user from auth store
+      const user = useAuthStore.getState().user;
+      
+      if (!user) {
+        console.error('Cannot update profile: No user logged in');
+        return;
+      }
+      
+      console.log('Updating company profile for user:', user.id);
+      
       const result = await apiClient.updateCompanyProfile(profileData);
-      set({ profile: result, loaded: true, loading: false, error: null });
+      
+      console.log('Successfully saved company profile:', result);
+      set({
+        profile: result,
+        profileUserId: user.id ?? (user as { _id?: string | number })._id ?? null,
+        loading: false,
+        error: null,
+        loaded: true
+      });
     } catch (error) {
-      console.error('Error saving company profile:', error);
+      console.error('Unexpected error in updateProfile:', error);
       const errorMessage = error instanceof Error ? error : new Error('Unknown error');
       set({ loading: false, error: errorMessage });
     }
   },
 
-  // Clears the signed-in user's profile, e.g. on sign-out
-  reset: () => set(initialState),
+  reset: () => {
+    set({ profile: null, profileUserId: null, loading: false, loaded: false, error: null });
+  }
 }));

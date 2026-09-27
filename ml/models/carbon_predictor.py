@@ -38,10 +38,13 @@ class CarbonPredictionModel:
         attention = layers.Activation('softmax')(attention)
         attention = layers.RepeatVector(64)(attention)
         attention = layers.Permute([2, 1])(attention)
-        
-        # Apply attention weights
+
+        # Apply attention weights. The softmax weights sum to 1 over time, so
+        # the weighted sum equals a weighted mean — GlobalAveragePooling1D
+        # computes the same reduction without a Lambda layer (Lambda closures
+        # are rejected by Keras 3 for h5 artifacts and block shape inference).
         attended = layers.Multiply()([lstm2, attention])
-        attended = layers.Lambda(lambda x: tf.reduce_sum(x, axis=1), output_shape=(64,))(attended)
+        attended = layers.GlobalAveragePooling1D()(attended)
         
         # Dense layers
         dense1 = layers.Dense(32, activation='relu')(attended)
@@ -107,8 +110,9 @@ class CarbonPredictionModel:
         
         X, _ = self.prepare_sequences(data, target_col)
         
-        # Predict
-        predictions_scaled = self.model.predict(X)
+        # Predict (verbose=0 keeps the progress bar off stdout so the script's
+        # JSON payload stays clean for the Express server to parse)
+        predictions_scaled = self.model.predict(X, verbose=0)
         
         # Inverse transform
         predictions = self.scaler_y.inverse_transform(predictions_scaled)
@@ -123,7 +127,14 @@ class CarbonPredictionModel:
     
     def load_model(self, filepath):
         """Load model and scalers"""
-        self.model = tf.keras.models.load_model(f"{filepath}_model.h5")
+        # safe_mode=False is kept as insurance: the artifact is regenerated in
+        # this environment (Lambda-free), but should an old Keras 2.x h5 ever
+        # be present, this allows it to load. compile=False avoids Keras 3
+        # choking on Keras 2-era metric/optimizer serialization in the h5.
+        self.model = tf.keras.models.load_model(
+            f"{filepath}_model.h5", safe_mode=False, compile=False
+        )
+        self.model.compile(optimizer='adam', loss='mse', metrics=['mae'])
         self.scaler_X = joblib.load(f"{filepath}_scaler_X.pkl")
         self.scaler_y = joblib.load(f"{filepath}_scaler_y.pkl")
         self.is_trained = True

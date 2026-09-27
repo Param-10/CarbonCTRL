@@ -1,30 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Leaf, Mail, Lock, User, ArrowLeft, ArrowRight } from 'lucide-react';
+import { Leaf, Mail, Lock, ArrowLeft, ArrowRight, KeyRound } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
-import { ApiError, type GoogleLinkOptions } from '../lib/api';
+import { apiClient, ApiError } from '../lib/api';
 import { initializeGoogleSignIn, loadGoogleIdentityScript } from '../lib/googleIdentity';
 
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
-// Google renders its button at a fixed pixel width within this range
-const GOOGLE_BUTTON_MIN_WIDTH = 200;
-const GOOGLE_BUTTON_MAX_WIDTH = 400;
-// Must match the server's limits
-const MIN_PASSWORD_LENGTH = 6;
-const MAX_PASSWORD_LENGTH = 72;
-const MAX_NAME_LENGTH = 100;
-const LINK_PASSWORD_REQUIRED = 'LINK_PASSWORD_REQUIRED';
-
-const isLinkPasswordError = (err: unknown) => err instanceof ApiError && err.code === LINK_PASSWORD_REQUIRED;
-
-const getErrorMessage = (err: unknown, fallback: string) => {
-  const message = err instanceof Error ? err.message : fallback;
-  if (message.includes('NetworkError') || message.includes('Failed to fetch')) {
-    return 'Cannot reach the server. Check VITE_API_URL and that the API is running.';
-  }
-  return message;
-};
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
 export default function AuthPage() {
   const [searchParams] = useSearchParams();
@@ -34,131 +16,163 @@ export default function AuthPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  // Google credential waiting for the existing account's password (or consent to remove it)
-  const [pendingGoogleCredential, setPendingGoogleCredential] = useState<string | null>(null);
+  const [twoFactorToken, setTwoFactorToken] = useState<string | null>(null);
+  const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [forgotMode, setForgotMode] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotMessage, setForgotMessage] = useState('');
+  // Google linking challenge: the email already has a password that must be
+  // proven (or explicitly discarded) before the Google identity is attached.
+  const [pendingGoogleLink, setPendingGoogleLink] = useState<{ idToken: string } | null>(null);
   const [linkPassword, setLinkPassword] = useState('');
+  const [linkMode, setLinkMode] = useState<'password' | 'discard'>('password');
+  const [linkLoading, setLinkLoading] = useState(false);
   const googleButtonRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
-  const { signIn, signUp, signInWithGoogle } = useAuthStore();
+  const { signIn, signUp, signInWith2FA, setSession } = useAuthStore();
 
-  // Render Google's sign-in button
+  // Keep Google's existing one-tap button flow from main. The signed ID token
+  // is verified by the server; 2FA is still required before a session is issued.
   useEffect(() => {
     if (!GOOGLE_CLIENT_ID) return;
-
     let cancelled = false;
 
-    loadGoogleIdentityScript()
-      .then(() => {
-        const container = googleButtonRef.current;
-        if (cancelled || !container || !window.google) return;
+    loadGoogleIdentityScript().then(() => {
+      const container = googleButtonRef.current;
+      if (cancelled || !container || !window.google) return;
 
-        initializeGoogleSignIn(GOOGLE_CLIENT_ID, async (credential) => {
-          setError('');
-          setLoading(true);
-          try {
-            await signInWithGoogle(credential);
-            navigate('/dashboard');
-          } catch (err: unknown) {
-            if (isLinkPasswordError(err)) {
-              setLinkPassword('');
-              setPendingGoogleCredential(credential);
-            } else {
-              setError(getErrorMessage(err, 'Google sign-in failed'));
-            }
-          } finally {
-            setLoading(false);
+      initializeGoogleSignIn(GOOGLE_CLIENT_ID, async (credential) => {
+        setError('');
+        setLoading(true);
+        try {
+          const response = await apiClient.googleAuth(credential);
+          if (response.requiresTwoFactor) {
+            setTwoFactorToken(response.twoFactorToken);
+            return;
           }
-        });
-
-        window.google.accounts.id.renderButton(container, {
-          theme: 'outline',
-          size: 'large',
-          text: 'continue_with',
-          shape: 'rectangular',
-          width: Math.min(GOOGLE_BUTTON_MAX_WIDTH, Math.max(GOOGLE_BUTTON_MIN_WIDTH, container.offsetWidth)),
-        });
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setError('Could not load Google sign-in. Check your connection or content blocker.');
+          const user = { ...response.user, id: response.user._id };
+          setSession({ access_token: response.token, user });
+          navigate('/dashboard');
+        } catch (err) {
+          if (err instanceof ApiError && err.code === 'LINK_PASSWORD_REQUIRED') {
+            setPendingGoogleLink({ idToken: credential });
+            setLinkPassword('');
+          } else {
+            setError(err instanceof Error ? err.message : 'Google sign-in failed');
+          }
+        } finally {
+          setLoading(false);
         }
       });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [navigate, signInWithGoogle]);
+      window.google.accounts.id.renderButton(container, {
+        theme: 'outline', size: 'large', text: 'continue_with', shape: 'rectangular',
+        width: Math.min(370, Math.max(240, container.offsetWidth)),
+      });
+    }).catch(() => {
+      if (!cancelled) setError('Could not load Google sign-in. Check your connection or content blocker.');
+    });
+
+    return () => { cancelled = true; };
+  }, [navigate, setSession]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setLoading(true);
 
     try {
       if (isSignIn) {
-        await signIn(email, password);
+        const twoFactor = await signIn(email, password);
+        if (twoFactor) {
+          // Account has 2FA enabled — ask for the authenticator code
+          setTwoFactorToken(twoFactor.twoFactorToken);
+          return;
+        }
       } else {
         await signUp(name, email, password);
       }
       navigate('/dashboard');
     } catch (err: unknown) {
-      setError(getErrorMessage(err, 'An unexpected error occurred'));
-    } finally {
-      setLoading(false);
+      const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
+      setError(errorMessage);
     }
   };
 
-  const linkGoogleAccount = async (link: GoogleLinkOptions) => {
-    if (!pendingGoogleCredential) return;
+  const handleTwoFactorSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     setError('');
-    setLoading(true);
 
     try {
-      await signInWithGoogle(pendingGoogleCredential, link);
+      if (!twoFactorToken) return;
+      await signInWith2FA(twoFactorToken, twoFactorCode);
       navigate('/dashboard');
     } catch (err: unknown) {
-      // Any other failure (e.g. the Google credential expired) needs a fresh Google sign-in
-      if (!isLinkPasswordError(err)) {
-        setPendingGoogleCredential(null);
-      }
-      setError(getErrorMessage(err, 'Could not connect Google'));
-    } finally {
-      setLoading(false);
+      const errorMessage = err instanceof Error ? err.message : 'Invalid verification code';
+      setError(errorMessage);
     }
   };
 
-  const handleLinkSubmit = (e: React.FormEvent) => {
+  const handleForgotPasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    linkGoogleAccount({ password: linkPassword });
+    setError('');
+    setForgotMessage('');
+
+    try {
+      const result = await apiClient.forgotPassword(forgotEmail);
+      setForgotMessage(result.message);
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to request password reset';
+      setError(errorMessage);
+    }
   };
 
-  const cancelGoogleLink = () => {
-    setPendingGoogleCredential(null);
-    setLinkPassword('');
-    setError('');
+  const cancelTwoFactor = () => {
+    setTwoFactorToken(null);
+    setTwoFactorCode('');
   };
 
-  const handleToggleMode = () => {
-    setIsSignIn(!isSignIn);
+  const handleGoogleLinkSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pendingGoogleLink) return;
+    setLinkLoading(true);
     setError('');
+
+    try {
+      const options =
+        linkMode === 'password'
+          ? { password: linkPassword }
+          : { discardPassword: true };
+      const response = await apiClient.googleLink(pendingGoogleLink.idToken, options);
+      if (response.requiresTwoFactor) {
+        setTwoFactorToken(response.twoFactorToken);
+        setPendingGoogleLink(null);
+        setLinkPassword('');
+        return;
+      }
+      const user = { ...response.user, id: response.user._id }; // Add id for compatibility
+      setSession({ access_token: response.token, user });
+      setPendingGoogleLink(null);
+      setLinkPassword('');
+      navigate('/dashboard');
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to link Google account';
+      setError(errorMessage);
+    } finally {
+      setLinkLoading(false);
+    }
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-800 via-emerald-900 to-gray-800 flex items-center justify-center px-4">
       <div className="w-full max-w-md">
-        <Link
-          to="/"
-          className="inline-flex items-center gap-2 mb-4 text-emerald-100/70 hover:text-emerald-200 transition-colors duration-200 font-mono text-sm group"
-        >
-          <ArrowLeft className="w-4 h-4 transform group-hover:-translate-x-1 transition-transform" />
-          <span>Back</span>
-        </Link>
-
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           className="glass-card p-8 rounded-2xl"
         >
+          <Link to="/" className="inline-flex items-center gap-2 mb-4 text-emerald-100/70 hover:text-emerald-200 font-mono text-sm">
+            <ArrowLeft className="w-4 h-4" /> Back to home
+          </Link>
           <div className="flex justify-center mb-8">
             <div className="bg-emerald-500/20 p-4 rounded-full">
               <Leaf className="w-8 h-8 text-emerald-400" />
@@ -166,7 +180,10 @@ export default function AuthPage() {
           </div>
 
           <h2 className="text-3xl font-bold text-center text-white mb-8 font-space">
-            {pendingGoogleCredential ? 'Connect Google' : isSignIn ? 'Welcome Back' : 'Create Account'}
+            {pendingGoogleLink ? 'Link Google Account'
+              : twoFactorToken && !forgotMode ? 'Two-Factor Authentication'
+              : forgotMode ? 'Reset Password'
+              : isSignIn ? 'Welcome Back' : 'Create Account'}
           </h2>
 
           {error && (
@@ -175,97 +192,199 @@ export default function AuthPage() {
             </div>
           )}
 
-          {GOOGLE_CLIENT_ID && (
-            // Hidden rather than unmounted while linking: Google renders its button into this container only once
-            <div className={pendingGoogleCredential ? 'hidden' : undefined}>
-              {/* Google Identity Services renders its own button into this container */}
-              <div ref={googleButtonRef} className="w-full flex justify-center mb-6 min-h-[44px]" />
-
-              <div className="relative mb-6">
+          {/* Keep Google's rendered button mounted while showing account challenges. */}
+          <div className={twoFactorToken || forgotMode || pendingGoogleLink ? 'hidden' : 'mb-6'}>
+            <div ref={googleButtonRef} className="flex justify-center" />
+            {GOOGLE_CLIENT_ID && <div className="relative mt-6">
                 <div className="absolute inset-0 flex items-center">
                   <div className="w-full border-t border-emerald-500/30"></div>
                 </div>
                 <div className="relative flex justify-center text-sm">
                   <span className="px-2 bg-gray-800 text-emerald-100/70 font-mono">or</span>
                 </div>
-              </div>
-            </div>
-          )}
+            </div>}
+          </div>
 
-          {pendingGoogleCredential ? (
-            <form onSubmit={handleLinkSubmit} className="space-y-6">
-              <p className="text-emerald-100/80 text-sm font-mono">
-                An account with this email already exists. Enter its password to connect your Google account.
+          {pendingGoogleLink && (
+            <>
+              <p className="text-center text-sm text-emerald-100/80 font-mono mb-6">
+                This email already has a password. Prove it to link your Google
+                account — or continue with Google only (the password is removed).
               </p>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-200 mb-2 font-mono" htmlFor="link-password">
-                  Password
-                </label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-                  <input
-                    id="link-password"
-                    type="password"
-                    autoComplete="current-password"
-                    value={linkPassword}
-                    onChange={(e) => setLinkPassword(e.target.value)}
-                    className="w-full bg-gray-800/50 border border-emerald-500/30 rounded-lg py-3 px-10 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
-                    placeholder="Enter your password"
-                    required
-                    autoFocus
-                  />
-                </div>
-              </div>
+              <form onSubmit={handleGoogleLinkSubmit} className="space-y-6">
+                {linkMode === 'password' ? (
+                  <div>
+                    <label
+                      className="block text-sm font-medium text-gray-200 mb-2 font-mono"
+                      htmlFor="google-link-password"
+                    >
+                      Account Password
+                    </label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                      <input
+                        id="google-link-password"
+                        type="password"
+                        value={linkPassword}
+                        onChange={(e) => setLinkPassword(e.target.value)}
+                        className="w-full bg-gray-800/50 border border-emerald-500/30 rounded-lg py-3 px-10 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
+                        placeholder="Enter your existing password"
+                        required
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-yellow-500/10 border border-yellow-500/50 rounded-lg p-4">
+                    <p className="text-yellow-300 text-sm font-mono">
+                      Your account's password will be removed and you'll sign in
+                      with Google only.
+                    </p>
+                  </div>
+                )}
 
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full bg-emerald-500 text-white py-3 px-6 rounded-lg font-semibold hover:bg-emerald-600 transition-colors duration-200 flex items-center justify-center gap-2 group disabled:opacity-50"
-              >
-                <span className="font-space">{loading ? 'Please wait...' : 'Connect Google'}</span>
-                <ArrowRight className="w-5 h-5 transform group-hover:translate-x-1 transition-transform" />
-              </button>
+                {linkMode === 'password' && (
+                  <button
+                    type="button"
+                    onClick={() => { setLinkMode('discard'); setLinkPassword(''); }}
+                    className="w-full text-center text-emerald-100/60 hover:text-emerald-100 transition-colors duration-200 font-mono text-sm"
+                  >
+                    I don't know the password — sign in with Google only
+                  </button>
+                )}
 
-              <div className="border-t border-emerald-500/30 pt-6">
-                <p className="text-emerald-100/70 text-xs font-mono mb-3">
-                  Don't know this password? Continue with Google only. The password will be removed and every other
-                  device signed in to this account will be signed out.
-                </p>
                 <button
-                  type="button"
-                  onClick={() => linkGoogleAccount({ discardPassword: true })}
-                  disabled={loading}
-                  className="w-full border border-emerald-500/30 text-emerald-300 py-2 px-4 rounded-lg font-mono text-sm hover:bg-emerald-500/10 transition-colors duration-200 disabled:opacity-50"
+                  type="submit"
+                  disabled={linkLoading || (linkMode === 'password' && !linkPassword)}
+                  className="w-full bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-mono text-sm py-3 px-6 rounded-lg transition-colors duration-200 disabled:opacity-50"
                 >
-                  Continue with Google only
+                  {linkLoading ? 'Linking...' : linkMode === 'password' ? 'Link & Continue' : 'Continue Without Password'}
                 </button>
-              </div>
-            </form>
-          ) : (
-            <form onSubmit={handleSubmit} className="space-y-6">
-              {!isSignIn && (
+
+                {linkMode === 'discard' && (
+                  <button
+                    type="button"
+                    onClick={() => setLinkMode('password')}
+                    className="w-full text-center text-emerald-100/60 hover:text-emerald-100 transition-colors duration-200 font-mono text-sm"
+                  >
+                    Back — enter my password
+                  </button>
+                )}
+              </form>
+            </>
+          )}
+
+          {twoFactorToken && !forgotMode && (
+            <>
+              {/* 2FA code entry */}
+              <p className="text-center text-sm text-emerald-100/80 font-mono mb-6">
+                Enter the 6-digit code from your authenticator app to complete sign-in.
+              </p>
+              <form onSubmit={handleTwoFactorSubmit} className="space-y-6">
                 <div>
-                  <label className="block text-sm font-medium text-gray-200 mb-2 font-mono" htmlFor="name">
-                    Name
+                  <label className="block text-sm font-medium text-gray-200 mb-2 font-mono" htmlFor="2fa-code">
+                    Authentication Code
                   </label>
                   <div className="relative">
-                    <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <KeyRound className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
                     <input
-                      id="name"
+                      id="2fa-code"
                       type="text"
-                      autoComplete="name"
-                      maxLength={MAX_NAME_LENGTH}
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={twoFactorCode}
+                      onChange={(e) => setTwoFactorCode(e.target.value.replace(/\D/g, ''))}
                       className="w-full bg-gray-800/50 border border-emerald-500/30 rounded-lg py-3 px-10 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
-                      placeholder="Enter your full name"
+                      placeholder="123456"
                       required
                     />
                   </div>
                 </div>
-              )}
 
+                <button
+                  type="submit"
+                  disabled={loading || twoFactorCode.length !== 6}
+                  className="w-full bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-mono text-sm py-3 px-6 rounded-lg transition-colors duration-200 disabled:opacity-50"
+                >
+                  {loading ? 'Verifying...' : 'Verify & Sign In'}
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelTwoFactor}
+                  className="w-full text-center text-emerald-100/60 hover:text-emerald-100 transition-colors duration-200 font-mono text-sm"
+                >
+                  Back to sign in
+                </button>
+              </form>
+            </>
+          )}
+
+          {forgotMode && !twoFactorToken && (
+            <>
+              <p className="text-center text-sm text-emerald-100/80 font-mono mb-6">
+                Enter your account email and we'll send you a password reset link.
+              </p>
+              <form onSubmit={handleForgotPasswordSubmit} className="space-y-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-200 mb-2 font-mono" htmlFor="forgot-email">
+                    Email
+                  </label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <input
+                      id="forgot-email"
+                      type="email"
+                      value={forgotEmail}
+                      onChange={(e) => setForgotEmail(e.target.value)}
+                      className="w-full bg-gray-800/50 border border-emerald-500/30 rounded-lg py-3 px-10 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
+                      placeholder="Enter your email"
+                      required
+                    />
+                  </div>
+                </div>
+
+                {forgotMessage && (
+                  <div className="bg-emerald-900/20 border border-emerald-500/30 rounded-lg p-4">
+                    <p className="text-emerald-300 text-sm font-mono break-all">{forgotMessage}</p>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-mono text-sm py-3 px-6 rounded-lg transition-colors duration-200 disabled:opacity-50"
+                >
+                  {loading ? 'Sending...' : 'Send Reset Link'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setForgotMode(false); setForgotMessage(''); setForgotEmail(''); }}
+                  className="w-full text-center text-emerald-100/60 hover:text-emerald-100 transition-colors duration-200 font-mono text-sm"
+                >
+                  Back to sign in
+                </button>
+              </form>
+            </>
+          )}
+
+          {!twoFactorToken && !forgotMode && !pendingGoogleLink && (
+            <form onSubmit={handleSubmit} className="space-y-6">
+              {!isSignIn && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-200 mb-2 font-mono" htmlFor="name">Name</label>
+                  <input
+                    id="name"
+                    type="text"
+                    autoComplete="name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    maxLength={100}
+                    required
+                    className="w-full bg-gray-800/50 border border-emerald-500/30 rounded-lg py-3 px-4 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
+                    placeholder="Enter your name"
+                  />
+                </div>
+              )}
               <div>
                 <label className="block text-sm font-medium text-gray-200 mb-2 font-mono" htmlFor="email">
                   Email
@@ -275,7 +394,6 @@ export default function AuthPage() {
                   <input
                     id="email"
                     type="email"
-                    autoComplete="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="w-full bg-gray-800/50 border border-emerald-500/30 rounded-lg py-3 px-10 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
@@ -294,41 +412,47 @@ export default function AuthPage() {
                   <input
                     id="password"
                     type="password"
-                    autoComplete={isSignIn ? 'current-password' : 'new-password'}
-                    minLength={isSignIn ? undefined : MIN_PASSWORD_LENGTH}
-                    maxLength={isSignIn ? undefined : MAX_PASSWORD_LENGTH}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="w-full bg-gray-800/50 border border-emerald-500/30 rounded-lg py-3 px-10 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
-                    placeholder={isSignIn ? 'Enter your password' : 'At least 6 characters'}
+                    placeholder="Enter your password"
                     required
                   />
                 </div>
+                {isSignIn && (
+                  <div className="flex justify-end mt-2">
+                    <button
+                      type="button"
+                      onClick={() => { setForgotMode(true); setError(''); }}
+                      className="text-emerald-300/80 hover:text-emerald-200 transition-colors duration-200 font-mono text-xs"
+                    >
+                      Forgot password?
+                    </button>
+                  </div>
+                )}
               </div>
 
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full bg-emerald-500 text-white py-3 px-6 rounded-lg font-semibold hover:bg-emerald-600 transition-colors duration-200 flex items-center justify-center gap-2 group disabled:opacity-50"
+                className="w-full bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-mono text-sm py-3 px-6 rounded-lg transition-colors duration-200 flex items-center justify-center gap-3 disabled:opacity-50 group"
               >
-                <span className="font-space">
-                  {loading ? 'Please wait...' : isSignIn ? 'Sign In' : 'Create Account'}
-                </span>
-                <ArrowRight className="w-5 h-5 transform group-hover:translate-x-1 transition-transform" />
+                <span className="font-space">{loading ? 'Please wait...' : isSignIn ? 'Sign In' : 'Create Account'}</span>
+                {!loading && <ArrowRight className="w-5 h-5 transform group-hover:translate-x-1 transition-transform" />}
               </button>
             </form>
           )}
 
-          <div className="mt-6 text-center">
-            <button
-              onClick={pendingGoogleCredential ? cancelGoogleLink : handleToggleMode}
-              className="text-emerald-300 hover:text-emerald-200 transition-colors duration-200 font-mono text-sm"
-            >
-              {pendingGoogleCredential
-                ? 'Cancel'
-                : isSignIn ? "Don't have an account? Sign Up" : 'Already have an account? Sign In'}
-            </button>
-          </div>
+          {!twoFactorToken && !forgotMode && !pendingGoogleLink && (
+            <div className="mt-6 text-center">
+              <button
+                onClick={() => setIsSignIn(!isSignIn)}
+                className="text-emerald-300 hover:text-emerald-200 transition-colors duration-200 font-mono text-sm"
+              >
+                {isSignIn ? "Don't have an account? Sign Up" : 'Already have an account? Sign In'}
+              </button>
+            </div>
+          )}
         </motion.div>
       </div>
     </div>

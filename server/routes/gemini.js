@@ -1,12 +1,16 @@
 import express from 'express';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { spawn } from 'child_process';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import auth from '../middleware/auth.js';
 import { getLegacyEmissionFactors, getEmissionFactor, isValidCombination } from '../config/emissionFactors.js';
-import User from '../models/User.js';
-import CompanyProfile from '../models/CompanyProfile.js';
-import CarbonActivity from '../models/CarbonActivity.js';
+import { usersRepo, profilesRepo, activitiesRepo } from '../db/repos.js';
+import { resolvePythonBin } from '../lib/python.js';
 
 const router = express.Router();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Get available emission factors and sectors
 router.get('/emission-factors', auth, async (req, res) => {
@@ -111,20 +115,17 @@ router.post('/carbon-recommendations', auth, async (req, res) => {
 
     // Get user and company data for personalization
     const userId = req.user.id;
-    const user = await User.findById(userId);
-    const companyProfile = await CompanyProfile.findOne({ userId });
-    const activities = await CarbonActivity.find({ userId });
+    const user = usersRepo.findById(userId);
+    const companyProfile = profilesRepo.findByUserId(userId);
+    const activities = activitiesRepo.findByUserId(userId);
 
     // **NEW: Try to use our trained ML recommendation engine first**
     let mlRecommendations = [];
     try {
-      // Import and use our ML models
-      const { spawn } = require('child_process');
-      const path = require('path');
-      
+      // Use our ML models
       const runMLScript = (scriptPath, data) => {
         return new Promise((resolve, reject) => {
-          const python = spawn('python3', [scriptPath, JSON.stringify(data)]);
+          const python = spawn(resolvePythonBin(), [scriptPath, JSON.stringify(data)]);
           
           let dataString = '';
           let errorString = '';
@@ -142,7 +143,9 @@ router.post('/carbon-recommendations', auth, async (req, res) => {
               reject(new Error(`ML script failed: ${errorString}`));
             } else {
               try {
-                const result = JSON.parse(dataString);
+                const jsonStart = dataString.indexOf('{');
+                const body = jsonStart >= 0 ? dataString.slice(jsonStart) : dataString;
+                const result = JSON.parse(body);
                 resolve(result);
               } catch (e) {
                 resolve({ recommendations: [] });
@@ -159,7 +162,7 @@ router.post('/carbon-recommendations', auth, async (req, res) => {
         transportation: emissions_data.breakdown['Transportation'] || 0,
         waste_generation: emissions_data.breakdown['Waste Management'] || 0,
         water_usage: emissions_data.breakdown['Water'] || 0,
-        employee_count: companyProfile?.employees?.match(/\d+/)?.[0] || 50,
+        employee_count: Number(companyProfile?.employees?.match(/\d+/)?.[0] || 50),
         industry: industry.toLowerCase(),
         budget_level: 2,
         urgency_level: 2
@@ -457,50 +460,60 @@ RESPONSE FORMAT (valid JSON only):
   }
 });
 
-// Enhanced tax benefits with personalization
 router.post('/tax-benefits', auth, async (req, res) => {
   try {
     const { company_profile, emissions_data } = req.body;
-    
+
     // Get user and company data for personalization
     const userId = req.user.id;
-    const user = await User.findById(userId);
-    const companyProfile = await CompanyProfile.findOne({ userId });
+    const user = usersRepo.findById(userId);
+    const companyProfile = profilesRepo.findByUserId(userId);
+
+    // Personalized fallback used whenever the live Gemini call is unavailable
+    // (no key, quota/503 outage, or unparseable output) so the endpoint never
+    // 500s — mirrors the graceful degradation of carbon-recommendations.
+    const fallbackBenefits = () => [
+      {
+        name: "Section 179D Energy Efficiency Deduction",
+        description: "Federal tax deduction for energy-efficient commercial building improvements",
+        eligibility: `${companyProfile?.industry || 'All'} businesses with commercial buildings`,
+        value: "Up to $5.00 per sq ft for qualifying improvements",
+        timeline: "Available through 2025, then permanent",
+        requirements: "Must meet specific energy reduction thresholds (25-50%)",
+        estimated_benefit: companyProfile?.employees ? `$${Math.min(50000, parseInt(companyProfile.employees) * 1000)}` : "$10,000-50,000"
+      },
+      {
+        name: "Clean Vehicle Tax Credit (Section 30D)",
+        description: "Tax credit for electric and plug-in hybrid vehicles",
+        eligibility: "Business vehicles under 14,000 lbs GVWR",
+        value: "Up to $7,500 per vehicle (new) or $4,000 (used)",
+        timeline: "Through 2032",
+        requirements: "Vehicle must meet final assembly and battery component requirements",
+        estimated_benefit: "Up to $37,500 for 5-vehicle fleet"
+      },
+      {
+        name: "Investment Tax Credit (ITC) for Solar",
+        description: "Federal tax credit for solar energy systems",
+        eligibility: "All businesses installing qualified solar equipment",
+        value: "30% of system cost through 2032",
+        timeline: "30% through 2032, then decreases",
+        requirements: "Must be installed on business property",
+        estimated_benefit: companyProfile?.location?.includes('CA') ? "$15,000-75,000" : "$10,000-50,000"
+      },
+      {
+        name: "Industry-Specific Energy Efficiency Incentive",
+        description: `Tailored energy efficiency programs for ${companyProfile?.industry || 'your'} industry`,
+        eligibility: `${companyProfile?.industry || 'All'} businesses in ${companyProfile?.location || 'qualifying areas'}`,
+        value: "15-30% of qualified improvements",
+        timeline: "Available now through 2025",
+        requirements: "Energy audit and 20% reduction target",
+        estimated_benefit: `$${Math.min(75000, (emissions_data?.total_emissions_tons_co2e || 50) * 1000)}`
+      }
+    ];
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      // Return enhanced fallback benefits
-      const fallbackBenefits = [
-        {
-          name: "Section 179D Energy Efficiency Deduction",
-          description: "Federal tax deduction for energy-efficient commercial building improvements",
-          eligibility: `${companyProfile?.industry || 'All'} businesses with commercial buildings`,
-          value: "Up to $5.00 per sq ft for qualifying improvements",
-          timeline: "Available through 2025, then permanent",
-          requirements: "Must meet specific energy reduction thresholds (25-50%)",
-          estimated_benefit: companyProfile?.employees ? `$${Math.min(50000, parseInt(companyProfile.employees) * 1000)}` : "$10,000-50,000"
-        },
-        {
-          name: "Clean Vehicle Tax Credit (Section 30D)",
-          description: "Tax credit for electric and plug-in hybrid vehicles",
-          eligibility: "Business vehicles under 14,000 lbs GVWR",
-          value: "Up to $7,500 per vehicle (new) or $4,000 (used)",
-          timeline: "Through 2032",
-          requirements: "Vehicle must meet final assembly and battery component requirements",
-          estimated_benefit: "Up to $37,500 for 5-vehicle fleet"
-        },
-        {
-          name: "Investment Tax Credit (ITC) for Solar",
-          description: "Federal tax credit for solar energy systems",
-          eligibility: "All businesses installing qualified solar equipment",
-          value: "30% of system cost through 2032",
-          timeline: "30% through 2032, then decreases",
-          requirements: "Must be installed on business property",
-          estimated_benefit: companyProfile?.location?.includes('CA') ? "$15,000-75,000" : "$10,000-50,000"
-        }
-      ];
-      
-      return res.json({ tax_benefits: fallbackBenefits });
+      return res.json({ tax_benefits: fallbackBenefits(), source: 'fallback' });
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
@@ -537,39 +550,31 @@ Provide 4-6 relevant tax benefits in this JSON format:
   ]
 }`;
 
-    const result = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.2,
-        topP: 0.8,
-        topK: 40,
-        maxOutputTokens: 3000,
-      },
-    });
+    let responseText;
+    try {
+      const result = await model.generateContent({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.2,
+          topP: 0.8,
+          topK: 40,
+          maxOutputTokens: 3000,
+        },
+      });
+      responseText = result.response.text();
+    } catch (geminiError) {
+      // Gemini outage / quota / content block — degrade gracefully instead of 500.
+      console.error('Gemini tax benefits unavailable, using fallback:', geminiError);
+      return res.json({ tax_benefits: fallbackBenefits(), source: 'fallback' });
+    }
 
-    const responseText = result.response.text();
-    
     try {
       const cleanedText = responseText.replace(/```json|```/g, '').trim();
       const benefits = JSON.parse(cleanedText);
-      res.json(benefits);
+      res.json({ ...benefits, source: 'gemini' });
     } catch (jsonError) {
       console.error('JSON parsing error for tax benefits:', jsonError);
-      
-      // Enhanced fallback with personalization
-      const fallbackBenefits = [
-        {
-          name: "Industry-Specific Energy Efficiency Incentive",
-          description: `Tailored energy efficiency programs for ${companyProfile?.industry || 'your'} industry`,
-          eligibility: `${companyProfile?.industry || 'All'} businesses in ${companyProfile?.location || 'qualifying areas'}`,
-          value: "15-30% of qualified improvements",
-          timeline: "Available now through 2025",
-          requirements: "Energy audit and 20% reduction target",
-          estimated_benefit: `$${Math.min(75000, (emissions_data?.total_emissions_tons_co2e || 50) * 1000)}`
-        }
-      ];
-      
-      res.json({ tax_benefits: fallbackBenefits });
+      res.json({ tax_benefits: fallbackBenefits(), source: 'fallback' });
     }
   } catch (error) {
     console.error('Error generating tax benefits:', error);

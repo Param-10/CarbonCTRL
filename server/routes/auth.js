@@ -1,31 +1,23 @@
 import express from 'express';
+import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import speakeasy from 'speakeasy';
+import QRCode from 'qrcode';
+import crypto from 'crypto';
 import rateLimit from 'express-rate-limit';
-import User from '../models/User.js';
-import CompanyProfile from '../models/CompanyProfile.js';
-import CarbonActivity from '../models/CarbonActivity.js';
-import CarbonAssessment from '../models/CarbonAssessment.js';
-import Emission from '../models/Emission.js';
+import { OAuth2Client } from 'google-auth-library';
+import { usersRepo, deleteUserAccount } from '../db/repos.js';
 import auth from '../middleware/auth.js';
-import { isGoogleAuthConfigured, verifyGoogleIdToken } from '../services/googleAuth.js';
+import { sendPasswordResetEmail } from '../services/passwordResetEmail.js';
 
 const router = express.Router();
 
-const MIN_PASSWORD_LENGTH = 6;
-// bcrypt ignores everything after the first 72 bytes, so longer passwords would be silently truncated
-const MAX_PASSWORD_BYTES = 72;
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const MAX_NAME_LENGTH = 100;
-const NAME_ERROR = 'Please enter your name (up to 100 characters)';
-const DUPLICATE_KEY_ERROR = 11000;
-// Tells the client to ask for the existing account's password before linking Google to it
-const LINK_PASSWORD_REQUIRED = 'LINK_PASSWORD_REQUIRED';
-
-// Stricter limit on endpoints that check credentials, to slow down brute forcing
+// Stricter limit on endpoints that check credentials, to slow down brute forcing.
+// Only failed attempts count, so people sharing an IP (office, school) are not
+// locked out by normal use.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10,
-  // Only failed attempts count, so people sharing an IP (office, school) are not locked out by normal use
   skipSuccessfulRequests: true,
   standardHeaders: true,
   legacyHeaders: false,
@@ -33,78 +25,87 @@ const authLimiter = rateLimit({
   message: { error: 'Too many attempts. Please try again in a few minutes.' }
 });
 
-// Rejecting non-strings also blocks query-operator injection like { "$ne": null }
-const isNonEmptyString = (value) => typeof value === 'string' && value.trim().length > 0;
+// Password reset requests return 200 for both known and unknown emails, so
+// they need a limiter that counts successful responses as well.
+const passwordResetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'test',
+  message: { error: 'Too many reset requests. Please try again later.' },
+});
 
-const normalizeEmail = (email) => email.trim().toLowerCase();
-
-// Returns the cleaned-up name, or null if it is missing, blank or too long
-const parseName = (name) => {
-  if (typeof name !== 'string') return null;
-  const cleaned = name.trim().replace(/\s+/g, ' ');
-  return cleaned.length > 0 && cleaned.length <= MAX_NAME_LENGTH ? cleaned : null;
-};
-
-const getGoogleName = (payload) =>
-  parseName(payload.name) ??
-  parseName([payload.given_name, payload.family_name].filter(Boolean).join(' ')) ??
-  undefined;
-
-const getPasswordError = (password) => {
-  if (password.length < MIN_PASSWORD_LENGTH) {
-    return 'Password must be at least 6 characters long';
-  }
-  if (Buffer.byteLength(password, 'utf8') > MAX_PASSWORD_BYTES) {
-    // The limit is in bytes, so accented and non-Latin characters count as more than one
-    return 'Password is too long. Use at most 72 characters, or fewer with accented or non-Latin characters';
-  }
-  return null;
-};
-
-// Generate JWT token
+// Generate JWT token. Embeds the user's current tokenVersion so a password
+// change / reset / discard bumps the version and invalidates old sessions.
 const generateToken = (user) => {
   return jwt.sign(
-    { userId: user._id, tokenVersion: user.tokenVersion ?? 0 },
+    { userId: user.id, tokenVersion: user.tokenVersion || 0 },
     process.env.JWT_SECRET,
     { expiresIn: '30d' }
   );
 };
 
-const sendSession = (res, user, status = 200) => {
-  const token = generateToken(user);
-  const userJson = user.toJSON();
-  res.status(status).json({
-    user: userJson,
-    token,
-    session: { access_token: token, user: userJson }
+// Short-lived token that only authorizes completing a 2FA challenge
+const generateTwoFactorToken = (user, pendingGoogleLink = null) => {
+  return jwt.sign({
+    userId: user.id,
+    tokenVersion: user.tokenVersion || 0,
+    purpose: 'twoFactor',
+    ...(pendingGoogleLink && { pendingGoogleLink }),
+  }, process.env.JWT_SECRET, {
+    expiresIn: '5m',
   });
 };
 
-// Finish a verified login
-const completeLogin = async (res, user) => {
-  user.lastLogin = new Date();
-  await user.save();
-  sendSession(res, user);
+// Hash a plaintext password (explicit replacement for the old Mongoose
+// pre('save') hook — the DB layer never sees plaintext passwords).
+const hashPassword = async (password) => {
+  const salt = await bcrypt.genSalt(12);
+  return bcrypt.hash(password, salt);
 };
+
+// Unified password policy: at least 6 chars, at most 72 bytes (bcrypt's
+// hard input limit — longer inputs are silently truncated by bcrypt, which
+// would let two different long passwords collide).
+const MAX_PASSWORD_BYTES = 72;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const parseName = (value) => {
+  if (typeof value !== 'string') return null;
+  const name = value.trim().replace(/\s+/g, ' ');
+  return name && name.length <= 100 ? name : null;
+};
+const getPasswordError = (password) => {
+  if (typeof password !== 'string') return 'Password must be a string';
+  if (password.length < 6) {
+    return 'Password must be at least 6 characters long';
+  }
+  if (Buffer.byteLength(password, 'utf8') > MAX_PASSWORD_BYTES) {
+    return `Password must be at most ${MAX_PASSWORD_BYTES} bytes`;
+  }
+  return null;
+};
+
+const normalizeEmail = (email) => email.trim().toLowerCase();
+
+// Password-reset tokens are stored as SHA-256 hashes so a DB leak does not
+// expose usable reset links.
+const hashResetToken = (token) =>
+  crypto.createHash('sha256').update(token).digest('hex');
 
 // Sign up
 router.post('/signup', authLimiter, async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { email, password, name } = req.body || {};
 
     // Validate input
-    if (!isNonEmptyString(email) || !isNonEmptyString(password)) {
+    if (typeof email !== 'string' || !email.trim() || typeof password !== 'string') {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
     const parsedName = parseName(name);
     if (!parsedName) {
-      return res.status(400).json({ error: NAME_ERROR });
-    }
-
-    const normalizedEmail = normalizeEmail(email);
-    if (!EMAIL_PATTERN.test(normalizedEmail)) {
-      return res.status(400).json({ error: 'Please enter a valid email address' });
+      return res.status(400).json({ error: 'Please enter your name (up to 100 characters)' });
     }
 
     const passwordError = getPasswordError(password);
@@ -112,27 +113,37 @@ router.post('/signup', authLimiter, async (req, res) => {
       return res.status(400).json({ error: passwordError });
     }
 
+    const normalizedEmail = normalizeEmail(email);
+    if (!EMAIL_PATTERN.test(normalizedEmail)) {
+      return res.status(400).json({ error: 'Please enter a valid email address' });
+    }
+
     // Check if user already exists
-    const existingUser = await User.findOne({ email: normalizedEmail });
+    const existingUser = usersRepo.findByEmail(normalizedEmail);
     if (existingUser) {
       return res.status(400).json({ error: 'User already exists with this email' });
     }
 
-    // Create new user
-    const user = new User({
-      name: parsedName,
+    // Hash the password before storing it
+    const hashed = await hashPassword(password);
+
+    const user = usersRepo.create({
       email: normalizedEmail,
-      password
+      name: parsedName,
+      password: hashed,
     });
 
-    await user.save();
+    const safeUser = usersRepo.toSafeUser(user);
 
-    sendSession(res, user, 201);
+    // Generate token
+    const token = generateToken(user);
+
+    res.status(201).json({
+      user: safeUser,
+      token,
+      session: { access_token: token, user: safeUser }
+    });
   } catch (error) {
-    // Two simultaneous sign-ups can both pass the existence check above
-    if (error.code === DUPLICATE_KEY_ERROR) {
-      return res.status(400).json({ error: 'User already exists with this email' });
-    }
     console.error('Signup error:', error);
     res.status(500).json({ error: 'Error creating user' });
   }
@@ -141,117 +152,136 @@ router.post('/signup', authLimiter, async (req, res) => {
 // Sign in
 router.post('/signin', authLimiter, async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password } = req.body || {};
 
     // Validate input
-    if (!isNonEmptyString(email) || !isNonEmptyString(password)) {
+    if (typeof email !== 'string' || !email.trim() || typeof password !== 'string' || !password) {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    // Google-only accounts have no password and cannot sign in this way
-    const user = await User.findOne({ email: normalizeEmail(email) });
-    if (!user || !user.password) {
+    const normalizedEmail = normalizeEmail(email);
+
+    // Find user
+    const user = usersRepo.findByEmail(normalizedEmail);
+    if (!user) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    const isMatch = await user.comparePassword(password);
+    // Password-less (Google) accounts cannot use password sign-in
+    if (!user.password) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    // Check password
+    const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    await completeLogin(res, user);
+    // If 2FA is enabled, do NOT issue a session yet — the client must first
+    // complete a TOTP challenge with the short-lived 2FA token.
+    if (user.twoFactorEnabled) {
+      return res.json({
+        requiresTwoFactor: true,
+        twoFactorToken: generateTwoFactorToken(user),
+        message: 'Two-factor authentication code required',
+      });
+    }
+
+    // Update last login
+    usersRepo.updateLastLogin(user.id);
+
+    const safeUser = usersRepo.toSafeUser(usersRepo.findById(user.id));
+
+    // Generate token
+    const token = generateToken(user);
+
+    res.json({
+      user: safeUser,
+      token,
+      session: { access_token: token, user: safeUser }
+    });
   } catch (error) {
     console.error('Signin error:', error);
     res.status(500).json({ error: 'Error signing in' });
   }
 });
 
-// Sign in with Google (ID token from Google Identity Services)
-router.post('/google', authLimiter, async (req, res) => {
+// Complete sign-in with a 2FA code (second factor)
+router.post('/signin/2fa', authLimiter, async (req, res) => {
   try {
-    const { credential, password, discardPassword } = req.body;
+    const { twoFactorToken, code } = req.body;
 
-    if (!isNonEmptyString(credential)) {
-      return res.status(400).json({ error: 'Google credential is required' });
-    }
-
-    if (!isGoogleAuthConfigured()) {
-      console.error('Google sign-in attempted but GOOGLE_CLIENT_ID is not set');
-      return res.status(500).json({ error: 'Google sign-in is not configured' });
+    if (!twoFactorToken || !code) {
+      return res.status(400).json({ error: 'Two-factor token and code are required' });
     }
 
     let payload;
     try {
-      payload = await verifyGoogleIdToken(credential);
-    } catch (verifyError) {
-      console.warn('Google token verification failed:', verifyError.message);
-      return res.status(401).json({ error: 'Invalid Google credential' });
+      payload = jwt.verify(twoFactorToken, process.env.JWT_SECRET);
+    } catch (err) {
+      return res.status(401).json({ error: 'Two-factor session expired. Please sign in again.' });
     }
 
-    if (!payload?.sub || !payload.email || !payload.email_verified) {
-      return res.status(401).json({ error: 'Google account email is not verified' });
+    if (payload.purpose !== 'twoFactor' || !payload.userId) {
+      return res.status(401).json({ error: 'Invalid two-factor token' });
     }
 
-    const email = normalizeEmail(payload.email);
-    let user = await User.findOne({ googleId: payload.sub });
+    let user = usersRepo.findById(payload.userId);
+    if (!user || !user.twoFactorEnabled || !user.twoFactorSecret) {
+      return res.status(401).json({ error: 'Two-factor authentication is not active for this account' });
+    }
+    if (payload.tokenVersion !== (user.tokenVersion || 0)) {
+      return res.status(401).json({ error: 'Two-factor session expired. Please sign in again.' });
+    }
 
-    if (!user) {
-      user = await User.findOne({ email });
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFactorSecret,
+      encoding: 'base32',
+      token: code,
+      window: 2,
+    });
 
-      if (user) {
-        if (user.googleId) {
-          return res.status(409).json({ error: 'This email is linked to a different Google account' });
-        }
+    if (!verified) {
+      return res.status(400).json({ error: 'Invalid two-factor code' });
+    }
 
-        // Email sign-up never proves ownership, so the password may belong to whoever registered
-        // this address first. Keep it only if the Google-verified owner can confirm it.
-        if (!user.isEmailVerified && user.password) {
-          if (isNonEmptyString(password)) {
-            if (!await user.comparePassword(password)) {
-              return res.status(400).json({ error: 'Password is incorrect', code: LINK_PASSWORD_REQUIRED });
-            }
-          } else if (discardPassword === true) {
-            // The owner does not know this password: remove it and sign out every session made with it
-            user.password = undefined;
-            user.tokenVersion = (user.tokenVersion ?? 0) + 1;
-          } else {
-            return res.status(409).json({
-              error: 'An account with this email already exists. Enter its password to connect Google.',
-              code: LINK_PASSWORD_REQUIRED
-            });
-          }
-        }
-
-        // Google has verified ownership of the email, so link it to the existing account.
-        // completeLogin below saves these changes together with lastLogin.
-        user.googleId = payload.sub;
-        user.isEmailVerified = true;
-        if (!user.name) user.name = getGoogleName(payload);
-      } else {
-        try {
-          user = await User.create({
-            name: getGoogleName(payload),
-            email,
-            googleId: payload.sub,
-            isEmailVerified: true,
-            lastLogin: new Date()
-          });
-          return sendSession(res, user);
-        } catch (createError) {
-          if (createError.code !== DUPLICATE_KEY_ERROR) throw createError;
-          // A simultaneous first sign-in (double-click, two tabs) may have just created this user
-          user = await User.findOne({ googleId: payload.sub });
-          if (!user) {
-            return res.status(409).json({ error: 'An account with this email was just created. Please try again.' });
-          }
-        }
+    // A Google account link is committed only after the second factor passes.
+    if (payload.pendingGoogleLink) {
+      const { googleId, discardPassword } = payload.pendingGoogleLink;
+      if (typeof googleId !== 'string' || !googleId || (user.googleId && user.googleId !== googleId)) {
+        return res.status(401).json({ error: 'Google account link is no longer valid.' });
       }
+      const claimed = usersRepo.findByGoogleId(googleId);
+      if (claimed && claimed.id !== user.id) {
+        return res.status(409).json({ error: 'Google account is already linked elsewhere.' });
+      }
+      user = usersRepo.update(user.id, {
+        googleId,
+        isEmailVerified: true,
+        ...(discardPassword && {
+          password: null,
+          tokenVersion: (user.tokenVersion || 0) + 1,
+        }),
+      });
     }
 
-    await completeLogin(res, user);
+    // Update last login
+    usersRepo.updateLastLogin(user.id);
+
+    const safeUser = usersRepo.toSafeUser(usersRepo.findById(user.id));
+
+    // Generate token
+    const token = generateToken(user);
+
+    res.json({
+      user: safeUser,
+      token,
+      session: { access_token: token, user: safeUser }
+    });
   } catch (error) {
-    console.error('Google sign-in error:', error);
-    res.status(500).json({ error: 'Google sign-in failed' });
+    console.error('2FA signin error:', error);
+    res.status(500).json({ error: 'Error verifying two-factor code' });
   }
 });
 
@@ -261,7 +291,7 @@ router.get('/session', auth, async (req, res) => {
     res.json({
       session: {
         access_token: req.header('Authorization')?.replace('Bearer ', ''),
-        user: req.user.toJSON()
+        user: req.user
       }
     });
   } catch (error) {
@@ -273,83 +303,61 @@ router.get('/session', auth, async (req, res) => {
 // Update user
 router.put('/user', authLimiter, auth, async (req, res) => {
   try {
-    const { name, password, currentPassword } = req.body;
-    // Loaded by the auth middleware, which already rejects tokens for deleted users
-    const { user } = req;
+    const { name, password, currentPassword } = req.body || {};
+    const user = usersRepo.findById(req.userId);
 
-    // Update fields if provided
-    if (name !== undefined) {
-      const parsedName = parseName(name);
-      if (!parsedName) {
-        return res.status(400).json({ error: NAME_ERROR });
-      }
-      user.name = parsedName;
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
     }
 
-    const isChangingPassword = password !== undefined;
-    if (isChangingPassword) {
-      if (typeof password !== 'string') {
-        return res.status(400).json({ error: 'Invalid password' });
-      }
-
+    // Password changes require re-authentication with the current password.
+    // Accounts without a password (Google-only) may set their first password.
+    if (password !== undefined) {
       const passwordError = getPasswordError(password);
       if (passwordError) {
         return res.status(400).json({ error: passwordError });
       }
-
-      // Accounts created with Google have no password yet and may set one directly
       if (user.password) {
-        const isMatch = isNonEmptyString(currentPassword) && await user.comparePassword(currentPassword);
+        if (!currentPassword) {
+          return res.status(400).json({ error: 'Current password is required to change your password' });
+        }
+        const isMatch = await bcrypt.compare(currentPassword, user.password);
         if (!isMatch) {
           return res.status(400).json({ error: 'Current password is incorrect' });
         }
       }
-
-      user.password = password;
-      // Sign out every other session; the caller gets a fresh token below
-      user.tokenVersion = (user.tokenVersion ?? 0) + 1;
     }
 
-    await user.save();
+    const fields = {};
+    if (name !== undefined) {
+      const parsedName = parseName(name);
+      if (!parsedName) return res.status(400).json({ error: 'Please enter your name (up to 100 characters)' });
+      fields.name = parsedName;
+    }
+    if (password !== undefined) {
+      fields.password = await hashPassword(password);
+      // Invalidate every previously issued session token.
+      fields.tokenVersion = (user.tokenVersion || 0) + 1;
+    }
 
-    res.json({
-      user: user.toJSON(),
-      ...(isChangingPassword && { token: generateToken(user) })
-    });
+    const updated = usersRepo.update(user.id, fields);
+    const safeUser = usersRepo.toSafeUser(updated);
+
+    // A password change bumped tokenVersion, so the old token is now dead.
+    // Return a fresh token so the client can continue without re-signing-in.
+    if (fields.password) {
+      const token = generateToken(updated);
+      return res.json({
+        user: safeUser,
+        token,
+        session: { access_token: token, user: safeUser },
+      });
+    }
+
+    res.json({ user: safeUser });
   } catch (error) {
     console.error('Update user error:', error);
     res.status(500).json({ error: 'Error updating user' });
-  }
-});
-
-// Delete account and all associated data
-router.delete('/user', authLimiter, auth, async (req, res) => {
-  try {
-    const { password } = req.body || {};
-    // Loaded by the auth middleware, which already rejects tokens for deleted users
-    const { user } = req;
-
-    // Re-confirm identity for accounts that have a password
-    if (user.password) {
-      const isMatch = isNonEmptyString(password) && await user.comparePassword(password);
-      if (!isMatch) {
-        return res.status(400).json({ error: 'Password is incorrect' });
-      }
-    }
-
-    await Promise.all([
-      CompanyProfile.deleteMany({ userId: user._id }),
-      CarbonActivity.deleteMany({ userId: user._id }),
-      CarbonAssessment.deleteMany({ userId: user._id }),
-      Emission.deleteMany({ userId: user._id })
-    ]);
-    // Delete the user last so a failed cleanup can be retried with the same session
-    await User.deleteOne({ _id: user._id });
-
-    res.json({ message: 'Account deleted successfully' });
-  } catch (error) {
-    console.error('Delete account error:', error);
-    res.status(500).json({ error: 'Error deleting account' });
   }
 });
 
@@ -362,6 +370,373 @@ router.post('/signout', auth, async (req, res) => {
   } catch (error) {
     console.error('Signout error:', error);
     res.status(500).json({ error: 'Error signing out' });
+  }
+});
+
+// Google sign-in with a Google Identity Services ID token. The legacy popup
+// code path remains accepted for clients still using it.
+router.post('/google', authLimiter, async (req, res) => {
+  try {
+    const { credential, googleToken: authCode, redirectUri, idToken, password, discardPassword } = req.body || {};
+
+    if (!authCode && !idToken && !credential) {
+      return res.status(400).json({ error: 'Authorization code or ID token required' });
+    }
+
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    if (!clientId || (authCode && !clientSecret)) {
+      return res.status(500).json({
+        error: 'Google OAuth is not configured on the server.'
+      });
+    }
+
+    const oauthClient = new OAuth2Client(clientId, clientSecret, redirectUri || 'postmessage');
+
+    // Two entry points: a fresh authorization code (popup callback flow) or a
+    // previously-verified Google ID token (retry after the account turned out
+    // to already have a password). Authorization codes are single-use, so the
+    // retry always carries the ID token, which is reusable and still signed.
+    let verifiedIdToken = credential || idToken;
+    if (!verifiedIdToken) {
+      // Exchange the authorization code for tokens
+      const { tokens } = await oauthClient.getToken({ code: authCode, redirect_uri: redirectUri });
+      verifiedIdToken = tokens.id_token;
+    }
+
+    if (!verifiedIdToken) {
+      return res.status(401).json({ error: 'Google authentication failed' });
+    }
+
+    // Verify the ID token's signature and audience — this is the security
+    // boundary: only Google-issued tokens for our client are accepted.
+    const ticket = await oauthClient.verifyIdToken({ idToken: verifiedIdToken, audience: clientId });
+    const payload = ticket.getPayload();
+
+    const {
+      sub: googleId,
+      email,
+      email_verified: emailVerified,
+      given_name: givenName,
+      family_name: familyName,
+      name,
+    } = payload || {};
+
+    // A Google login is only trusted when Google vouches for the email.
+    if (!googleId || !email || !emailVerified) {
+      return res.status(401).json({ error: 'Google authentication failed' });
+    }
+
+    const normalizedEmail = normalizeEmail(email);
+
+    // Find by Google ID first; then link an existing account whose verified
+    // email matches (proves ownership of that email).
+    let user = usersRepo.findByGoogleId(googleId);
+    if (!user && normalizedEmail) {
+      const existing = usersRepo.findByEmail(normalizedEmail);
+      if (existing) {
+        // A different Google account has already claimed this email.
+        if (existing.googleId && existing.googleId !== googleId) {
+          return res.status(409).json({
+            error: 'This email is already linked to a different Google account.',
+            code: 'GOOGLE_EMAIL_LINKED',
+          });
+        }
+
+        // This account has a password and its email was never verified, so
+        // blindly linking the Google identity would take over the account.
+        // The client must prove the password — or explicitly discard it
+        // (replacing password login with Google-only). The ID token is
+        // returned on the 409 so the frontend can retry without burning
+        // another single-use authorization code.
+        if (!existing.isEmailVerified && existing.password) {
+          if (typeof password === 'string') {
+            const isMatch = await bcrypt.compare(password, existing.password);
+            if (!isMatch) {
+              return res.status(409).json({
+                error: 'Incorrect password for this account.',
+                code: 'LINK_PASSWORD_REQUIRED',
+                idToken: verifiedIdToken,
+              });
+            }
+          } else if (discardPassword === true) {
+            if (existing.twoFactorEnabled) {
+              return res.json({
+                requiresTwoFactor: true,
+                twoFactorToken: generateTwoFactorToken(existing, { googleId, discardPassword: true }),
+              });
+            }
+            user = usersRepo.update(existing.id, {
+              googleId,
+              isEmailVerified: true,
+              password: null,
+              // Removing the password invalidates every existing session.
+              tokenVersion: (existing.tokenVersion || 0) + 1,
+            });
+          } else {
+            return res.status(409).json({
+              error: 'This email already has a password. Enter it to link your Google account.',
+              code: 'LINK_PASSWORD_REQUIRED',
+              idToken: verifiedIdToken,
+            });
+          }
+        }
+
+        if (!user) {
+          if (existing.twoFactorEnabled) {
+            return res.json({
+              requiresTwoFactor: true,
+              twoFactorToken: generateTwoFactorToken(existing, { googleId, discardPassword: false }),
+            });
+          }
+          user = usersRepo.update(existing.id, {
+            googleId,
+            isEmailVerified: true,
+          });
+        }
+      }
+    }
+
+    // Otherwise create a new account (no password — email is Google-verified)
+    if (!user) {
+      user = usersRepo.create({
+        email: normalizedEmail || `google-${googleId}@localhost`,
+        name: parseName(name) || parseName([givenName, familyName].filter(Boolean).join(' ')),
+        firstName: givenName || name || 'Google',
+        lastName: familyName || '',
+        googleId,
+        isEmailVerified: true,
+      });
+    }
+
+    if (!user.name) {
+      user = usersRepo.update(user.id, {
+        name: parseName(name) || parseName([givenName, familyName].filter(Boolean).join(' ')) || 'Google',
+      });
+    }
+
+    // Google sign-in also requires the configured second factor.
+    if (user.twoFactorEnabled) {
+      return res.json({
+        requiresTwoFactor: true,
+        twoFactorToken: generateTwoFactorToken(user),
+        message: 'Two-factor authentication code required',
+      });
+    }
+
+    // Update last login
+    usersRepo.updateLastLogin(user.id);
+
+    const safeUser = usersRepo.toSafeUser(usersRepo.findById(user.id));
+    const token = generateToken(user);
+
+    res.json({
+      token,
+      user: safeUser,
+      session: { access_token: token, user: safeUser }
+    });
+  } catch (error) {
+    console.error('Google OAuth error details:', error.message);
+    res.status(401).json({ error: 'Google authentication failed' });
+  }
+});
+
+// Request a password reset. The token is delivered only to the account's
+// verified inbox, never in the API response or server logs.
+router.post('/forgot-password', passwordResetLimiter, async (req, res) => {
+  try {
+    if (!process.env.RESEND_API_KEY || !process.env.RESET_FROM_EMAIL) {
+      return res.status(503).json({ error: 'Password reset email is not configured.' });
+    }
+
+    const { email } = req.body || {};
+
+    if (typeof email === 'string' && email.trim()) {
+      const user = usersRepo.findByEmail(normalizeEmail(email));
+      // Only accounts with a password can be reset (Google accounts sign in
+      // via Google instead).
+      if (user && user.password) {
+        const token = crypto.randomBytes(32).toString('hex');
+        const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+        const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+        const resetUrl = new URL('/reset-password', baseUrl);
+        // A fragment is not sent in HTTP requests or Referer headers.
+        resetUrl.hash = new URLSearchParams({ token }).toString();
+
+        await sendPasswordResetEmail(user.email, resetUrl.toString());
+        usersRepo.update(user.id, {
+          resetPasswordToken: hashResetToken(token),
+          resetPasswordExpires: expires,
+        });
+      }
+    }
+
+    res.json({ message: 'Password reset instructions sent (if the account exists).' });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(503).json({ error: 'Password reset email is temporarily unavailable.' });
+  }
+});
+
+// Complete a password reset with the emailed token
+router.post('/reset-password', authLimiter, async (req, res) => {
+  try {
+    const { token, password } = req.body || {};
+
+    if (typeof token !== 'string' || !token || !password) {
+      return res.status(400).json({ error: 'Token and new password are required' });
+    }
+
+    const passwordError = getPasswordError(password);
+    if (passwordError) {
+      return res.status(400).json({ error: passwordError });
+    }
+
+    const user = usersRepo.findByResetTokenHash(hashResetToken(token));
+    if (!user || !user.resetPasswordExpires || user.resetPasswordExpires.getTime() < Date.now()) {
+      return res.status(400).json({ error: 'Password reset token is invalid or has expired' });
+    }
+
+    const hashed = await hashPassword(password);
+    usersRepo.update(user.id, {
+      password: hashed,
+      resetPasswordToken: null,
+      resetPasswordExpires: null,
+      // A reset changes who is allowed to sign in — invalidate old sessions.
+      tokenVersion: (user.tokenVersion || 0) + 1,
+    });
+
+    res.json({ message: 'Password has been reset. You can now sign in.' });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ error: 'Error resetting password' });
+  }
+});
+
+// Generate 2FA secret
+router.post('/2fa/setup', auth, async (req, res) => {
+  try {
+    const user = usersRepo.findById(req.userId);
+
+    if (user.twoFactorEnabled) {
+      return res.status(400).json({ error: 'Two-factor authentication is already enabled' });
+    }
+
+    const secret = speakeasy.generateSecret({
+      name: `CarbonCTRL (${user.email})`,
+      issuer: 'CarbonCTRL'
+    });
+
+    // Store temporary secret (don't save to DB until verified)
+    const qrCodeUrl = await QRCode.toDataURL(secret.otpauth_url);
+
+    res.json({
+      secret: secret.base32,
+      qrCode: qrCodeUrl,
+      manualEntryKey: secret.base32
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Verify and enable 2FA
+router.post('/2fa/verify', auth, async (req, res) => {
+  try {
+    const { token, secret } = req.body;
+
+    if (!token || !secret) {
+      return res.status(400).json({ error: 'Verification code and secret are required' });
+    }
+
+    const verified = speakeasy.totp.verify({
+      secret,
+      encoding: 'base32',
+      token,
+      window: 2
+    });
+
+    if (verified) {
+      usersRepo.update(req.userId, {
+        twoFactorSecret: secret,
+        twoFactorEnabled: true
+      });
+
+      res.json({ success: true });
+    } else {
+      res.status(400).json({ error: 'Invalid 2FA token' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Disable 2FA — requires the current TOTP code so a leaked session token
+// cannot silently downgrade the account's security.
+router.post('/2fa/disable', auth, async (req, res) => {
+  try {
+    const { token: code } = req.body;
+    const user = usersRepo.findById(req.userId);
+
+    if (!user || !user.twoFactorEnabled || !user.twoFactorSecret) {
+      return res.status(400).json({ error: 'Two-factor authentication is not enabled' });
+    }
+
+    if (!code) {
+      return res.status(400).json({ error: 'Enter your current two-factor code to disable 2FA' });
+    }
+
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFactorSecret,
+      encoding: 'base32',
+      token: code,
+      window: 2
+    });
+
+    if (!verified) {
+      return res.status(400).json({ error: 'Invalid two-factor code' });
+    }
+
+    usersRepo.update(req.userId, {
+      twoFactorSecret: null,
+      twoFactorEnabled: false
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete account — requires the password again so a stolen session token
+// cannot be used alone to destroy the account. All user data is removed in a
+// single transaction.
+router.delete('/account', authLimiter, auth, async (req, res) => {
+  try {
+    const { password } = req.body || {};
+    const user = usersRepo.findById(req.userId);
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (user.password) {
+      if (!password) {
+        return res.status(400).json({ error: 'Password is required to delete your account' });
+      }
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) {
+        return res.status(400).json({ error: 'Password is incorrect' });
+      }
+    }
+
+    deleteUserAccount(user.id);
+
+    res.json({ message: 'Account deleted successfully' });
+  } catch (error) {
+    console.error('Delete account error:', error);
+    res.status(500).json({ error: 'Error deleting account' });
   }
 });
 

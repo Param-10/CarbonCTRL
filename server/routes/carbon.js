@@ -1,29 +1,22 @@
 import express from 'express';
-import CarbonAssessment from '../models/CarbonAssessment.js';
-import CarbonActivity from '../models/CarbonActivity.js';
-import Emission from '../models/Emission.js';
+import { assessmentsRepo, activitiesRepo, emissionsRepo, resetUserData } from '../db/repos.js';
 import auth from '../middleware/auth.js';
 
 const router = express.Router();
 
+/** Get the user's current (latest active) assessment, creating one if needed. */
+const getOrCreateActiveAssessment = (userId) => {
+  let assessment = assessmentsRepo.findActiveByUserId(userId);
+  if (!assessment) {
+    assessment = assessmentsRepo.create(userId);
+  }
+  return assessment;
+};
+
 // Get or create carbon assessment
 router.get('/assessment', auth, async (req, res) => {
   try {
-    let assessment = await CarbonAssessment.findOne({ 
-      userId: req.userId,
-      isActive: true 
-    }).sort({ createdAt: -1 });
-
-    if (!assessment) {
-      // Create new assessment if none exists
-      assessment = new CarbonAssessment({
-        userId: req.userId,
-        totalEmissions: 0,
-        grade: 'N/A'
-      });
-      await assessment.save();
-    }
-
+    const assessment = getOrCreateActiveAssessment(req.userId);
     res.json(assessment);
   } catch (error) {
     console.error('Get assessment error:', error);
@@ -35,18 +28,13 @@ router.get('/assessment', auth, async (req, res) => {
 router.get('/activities', auth, async (req, res) => {
   try {
     // Get current assessment
-    const assessment = await CarbonAssessment.findOne({ 
-      userId: req.userId,
-      isActive: true 
-    }).sort({ createdAt: -1 });
+    const assessment = assessmentsRepo.findActiveByUserId(req.userId);
 
     if (!assessment) {
       return res.json([]);
     }
 
-    const activities = await CarbonActivity.find({ 
-      assessmentId: assessment._id 
-    }).sort({ createdAt: -1 });
+    const activities = activitiesRepo.findByAssessmentId(assessment.id, 'desc');
 
     res.json(activities);
   } catch (error) {
@@ -62,37 +50,27 @@ router.post('/activity', auth, async (req, res) => {
 
     // Validate required fields
     if (!sector || !subsector || activityAmount === undefined || !activityUnit) {
-      return res.status(400).json({ 
-        error: 'Sector, subsector, activity amount, and activity unit are required' 
+      return res.status(400).json({
+        error: 'Sector, subsector, activity amount, and activity unit are required'
       });
+    }
+
+    if (typeof activityAmount !== 'number' || activityAmount < 0) {
+      return res.status(400).json({ error: 'Activity amount must be a non-negative number' });
     }
 
     // Get or create assessment
-    let assessment = await CarbonAssessment.findOne({ 
-      userId: req.userId,
-      isActive: true 
-    }).sort({ createdAt: -1 });
-
-    if (!assessment) {
-      assessment = new CarbonAssessment({
-        userId: req.userId,
-        totalEmissions: 0,
-        grade: 'N/A'
-      });
-      await assessment.save();
-    }
+    const assessment = getOrCreateActiveAssessment(req.userId);
 
     // Create activity
-    const activity = new CarbonActivity({
-      assessmentId: assessment._id,
+    const activity = activitiesRepo.create({
+      assessmentId: assessment.id,
       userId: req.userId,
       sector,
       subsector,
       activityAmount,
       activityUnit
     });
-
-    await activity.save();
 
     res.status(201).json(activity);
   } catch (error) {
@@ -104,12 +82,14 @@ router.post('/activity', auth, async (req, res) => {
 // Delete carbon activity
 router.delete('/activity/:id', auth, async (req, res) => {
   try {
-    const activity = await CarbonActivity.findOneAndDelete({
-      _id: req.params.id,
-      userId: req.userId
-    });
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) {
+      return res.status(400).json({ error: 'Invalid activity id' });
+    }
 
-    if (!activity) {
+    const deleted = activitiesRepo.deleteByIdAndUser(id, req.userId);
+
+    if (!deleted) {
       return res.status(404).json({ error: 'Activity not found' });
     }
 
@@ -123,11 +103,7 @@ router.delete('/activity/:id', auth, async (req, res) => {
 // Get emissions data
 router.get('/emissions', auth, async (req, res) => {
   try {
-    const emissions = await Emission.find({ 
-      userId: req.userId,
-      type: { $ne: 'total' }
-    }).sort({ createdAt: -1 });
-
+    const emissions = emissionsRepo.findNonTotalByUserId(req.userId, 'desc');
     res.json(emissions);
   } catch (error) {
     console.error('Get emissions error:', error);
@@ -140,42 +116,40 @@ router.put('/assessment/:id', auth, async (req, res) => {
   try {
     const { totalEmissions, grade, emissionsBreakdown } = req.body;
 
-    const assessment = await CarbonAssessment.findOne({
-      _id: req.params.id,
-      userId: req.userId
-    });
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) {
+      return res.status(400).json({ error: 'Invalid assessment id' });
+    }
 
-    if (!assessment) {
+    const assessment = assessmentsRepo.findById(id);
+
+    // Scope-check: the assessment must belong to the requesting user
+    if (!assessment || assessment.userId !== req.userId) {
       return res.status(404).json({ error: 'Assessment not found' });
     }
 
-    // Update assessment
-    assessment.totalEmissions = totalEmissions;
-    assessment.grade = grade;
-    await assessment.save();
+    // Update assessment and rebuild emissions atomically
+    const updated = assessmentsRepo.updateById(id, {
+      totalEmissions,
+      grade
+    });
 
-    // Delete existing emissions data
-    await Emission.deleteMany({ userId: req.userId });
-
-    // Insert new emissions data
-    if (emissionsBreakdown) {
-      const emissionEntries = Object.entries(emissionsBreakdown).map(([type, amount]) => ({
-        userId: req.userId,
-        type,
-        amount
-      }));
-
-      // Add total emissions
-      emissionEntries.push({
-        userId: req.userId,
-        type: 'total',
-        amount: totalEmissions
+    // Delete existing emissions data and insert the new breakdown + total in
+    // a single transaction (no partial state if anything fails).
+    const emissionEntries = [];
+    if (emissionsBreakdown && typeof emissionsBreakdown === 'object') {
+      Object.entries(emissionsBreakdown).forEach(([type, amount]) => {
+        if (typeof amount === 'number' && Number.isFinite(amount)) {
+          emissionEntries.push({ type, amount });
+        }
       });
-
-      await Emission.insertMany(emissionEntries);
     }
 
-    res.json(assessment);
+    emissionEntries.push({ type: 'total', amount: totalEmissions ?? 0 });
+
+    emissionsRepo.replaceAll(req.userId, emissionEntries);
+
+    res.json(updated);
   } catch (error) {
     console.error('Update assessment error:', error);
     res.status(500).json({ error: 'Error updating carbon assessment' });
@@ -185,13 +159,7 @@ router.put('/assessment/:id', auth, async (req, res) => {
 // Reset all carbon data
 router.delete('/reset', auth, async (req, res) => {
   try {
-    // Delete all user's carbon data
-    await Promise.all([
-      CarbonActivity.deleteMany({ userId: req.userId }),
-      CarbonAssessment.deleteMany({ userId: req.userId }),
-      Emission.deleteMany({ userId: req.userId })
-    ]);
-
+    resetUserData(req.userId);
     res.json({ message: 'All carbon data reset successfully' });
   } catch (error) {
     console.error('Reset carbon data error:', error);
@@ -203,9 +171,7 @@ router.delete('/reset', auth, async (req, res) => {
 router.get('/saved-data', auth, async (req, res) => {
   try {
     // Get latest assessment
-    const assessment = await CarbonAssessment.findOne({ 
-      userId: req.userId 
-    }).sort({ createdAt: -1 });
+    const assessment = assessmentsRepo.findLatestByUserId(req.userId);
 
     if (!assessment) {
       return res.json({
@@ -216,15 +182,10 @@ router.get('/saved-data', auth, async (req, res) => {
     }
 
     // Get activities for this assessment
-    const activities = await CarbonActivity.find({ 
-      assessmentId: assessment._id 
-    });
+    const activities = activitiesRepo.findByAssessmentId(assessment.id, 'asc');
 
     // Get emissions data
-    const emissions = await Emission.find({ 
-      userId: req.userId,
-      type: { $ne: 'total' }
-    });
+    const emissions = emissionsRepo.findNonTotalByUserId(req.userId, 'asc');
 
     res.json({
       assessment,
@@ -237,4 +198,4 @@ router.get('/saved-data', auth, async (req, res) => {
   }
 });
 
-export default router; 
+export default router;

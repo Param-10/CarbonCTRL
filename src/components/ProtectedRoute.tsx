@@ -11,7 +11,7 @@ interface ProtectedRouteProps {
 const ProtectedRoute = ({ children, requireCompanyProfile = false }: ProtectedRouteProps) => {
   const { user, sessionCheckFailed, initializeAuth } = useAuthStore();
   const [retrying, setRetrying] = useState(false);
-  const { profile, loaded, error, fetchProfile } = useCompanyStore();
+  const { profile, loading, loaded, fetchProfile } = useCompanyStore();
   const location = useLocation();
 
   useEffect(() => {
@@ -55,25 +55,12 @@ const ProtectedRoute = ({ children, requireCompanyProfile = false }: ProtectedRo
     if (location.pathname === '/company-profile') {
       return <>{children}</>;
     }
-
-    if (error && !loaded) {
-      return (
-        <div className="min-h-screen flex items-center justify-center">
-          <div className="text-center">
-            <p className="font-mono text-red-300 text-sm mb-4">Could not load your company profile.</p>
-            <button
-              onClick={() => fetchProfile()}
-              className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-mono text-sm py-2 px-4 rounded-lg transition-colors"
-            >
-              Try Again
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    // Wait until the profile has been fetched before deciding whether to redirect
-    if (!loaded) {
+    
+    // Wait for the profile lookup to finish before deciding anything. The
+    // store's `loaded` flag starts false, so the first paint shows a spinner
+    // instead of bouncing the user to /company-profile before the fetch
+    // completes (the redirect race).
+    if (!loaded || loading) {
       return (
         <div className="min-h-screen bg-gradient-to-b from-gray-800 via-emerald-900 to-gray-800 flex items-center justify-center">
           <div className="text-center">
@@ -83,7 +70,8 @@ const ProtectedRoute = ({ children, requireCompanyProfile = false }: ProtectedRo
         </div>
       );
     }
-
+    
+    // Only redirect if profile loading is done and no profile exists
     if (!profile || !profile.name) {
       return <Navigate to="/company-profile" replace />;
     }

@@ -8,6 +8,7 @@ import AppWithPersistence from './components/AppWithPersistence';
 import ProtectedRoute from './components/ProtectedRoute';
 import LandingPage from './pages/LandingPage';
 import AuthPage from './pages/AuthPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 import DashboardPage from './pages/DashboardPage';
 import SettingsPage from './pages/SettingsPage';
 import CompanyProfilePage from './pages/CompanyProfilePage';
@@ -68,6 +69,7 @@ function App() {
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/auth" element={<AuthPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route element={<Layout />}>
             <Route 
               path="/dashboard" 

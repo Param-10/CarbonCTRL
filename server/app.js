@@ -8,6 +8,7 @@ import carbonRoutes from './routes/carbon.js';
 import companyRoutes from './routes/company.js';
 import geminiRoutes from './routes/gemini.js';
 import mlRoutes from './routes/ml.js';
+import { pingDatabase } from './db/index.js';
 
 const app = express();
 
@@ -66,9 +67,17 @@ app.use('/api/company', companyRoutes);
 app.use('/api/gemini', geminiRoutes);
 app.use('/api/ml', mlRoutes);
 
-// Health check endpoint
+// Health check endpoint (SQLite is local, so this reflects DB availability)
 app.get('/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+  try {
+    const dbOk = pingDatabase();
+    if (!dbOk) {
+      return res.status(503).json({ status: 'ERROR', database: 'unavailable', timestamp: new Date().toISOString() });
+    }
+    res.json({ status: 'OK', database: 'connected', storage: 'sqlite', timestamp: new Date().toISOString() });
+  } catch (error) {
+    res.status(503).json({ status: 'ERROR', database: 'unavailable', error: error.message });
+  }
 });
 
 // Error handling middleware
