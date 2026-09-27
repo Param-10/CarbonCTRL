@@ -5,16 +5,13 @@ import { TwoFactorSettings } from '../components/TwoFactorSettings';
 import { apiClient } from '../lib/api';
 
 const SettingsPage = () => {
-  const { user, signOut } = useAuthStore();
+  const { user, signOut, session, setSession } = useAuthStore();
   const [loading, setLoading] = useState({
     profile: false,
     password: false
   });
   
-  const [profileData, setProfileData] = useState({
-    firstName: user?.firstName || '',
-    lastName: user?.lastName || ''
-  });
+  const [name, setName] = useState(user?.name || '');
   
   const [passwordData, setPasswordData] = useState({
     currentPassword: '',
@@ -34,10 +31,7 @@ const SettingsPage = () => {
   // Update profile data when user changes
   useEffect(() => {
     if (user) {
-      setProfileData({
-        firstName: user.firstName || '',
-        lastName: user.lastName || ''
-      });
+      setName(user.name || '');
     }
   }, [user]);
 
@@ -47,10 +41,8 @@ const SettingsPage = () => {
     setLoading(prev => ({ ...prev, profile: true }));
     
     try {
-      await apiClient.updateUser({
-        firstName: profileData.firstName,
-        lastName: profileData.lastName
-      });
+      const response = await apiClient.updateUser({ name });
+      if (session) setSession({ access_token: session.access_token, user: response.user });
       
       setNotifications({ type: 'success', message: 'Profile updated successfully' });
       setTimeout(() => setNotifications(null), 3000);
@@ -73,10 +65,11 @@ const SettingsPage = () => {
     setLoading(prev => ({ ...prev, password: true }));
     
     try {
-      await apiClient.updateUser({
+      const response = await apiClient.updateUser({
         password: passwordData.newPassword,
         currentPassword: passwordData.currentPassword
       });
+      if (response.token) setSession({ access_token: response.token, user: response.user });
       
       setPasswordData({
         currentPassword: '',
@@ -158,24 +151,15 @@ const SettingsPage = () => {
 
         <div className="grid md:grid-cols-2 gap-6">
           <div>
-            <label className="block font-mono text-sm text-emerald-100/70 mb-3">First Name</label>
+            <label className="block font-mono text-sm text-emerald-100/70 mb-3" htmlFor="settings-name">Name</label>
             <input
+              id="settings-name"
               type="text"
-              value={profileData.firstName}
-              onChange={(e) => setProfileData({ ...profileData, firstName: e.target.value })}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              maxLength={100}
               className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-3 text-white font-mono placeholder-gray-400 focus:border-emerald-500/50 focus:outline-none"
-              placeholder="Enter your first name"
-            />
-          </div>
-
-          <div>
-            <label className="block font-mono text-sm text-emerald-100/70 mb-3">Last Name</label>
-            <input
-              type="text"
-              value={profileData.lastName}
-              onChange={(e) => setProfileData({ ...profileData, lastName: e.target.value })}
-              className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-3 text-white font-mono placeholder-gray-400 focus:border-emerald-500/50 focus:outline-none"
-              placeholder="Enter your last name"
+              placeholder="Enter your name"
             />
           </div>
 
@@ -191,7 +175,7 @@ const SettingsPage = () => {
         <div className="flex justify-end mt-6">
           <button
             onClick={handleProfileUpdate}
-            disabled={loading.profile}
+            disabled={loading.profile || !name.trim()}
             className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-mono text-sm py-3 px-6 rounded-lg transition-colors disabled:opacity-50"
           >
             {loading.profile ? 'Updating...' : 'Update Profile'}
@@ -272,8 +256,9 @@ const SettingsPage = () => {
       {/* Two-Factor Authentication */}
       <TwoFactorSettings 
         user={user} 
-        onUpdate={() => {
-          // Refresh user data if needed
+        onUpdate={async () => {
+          const response = await apiClient.getSession();
+          if (response.session) setSession(response.session);
           setNotifications({ type: 'success', message: '2FA settings updated successfully' });
           setTimeout(() => setNotifications(null), 3000);
         }} 

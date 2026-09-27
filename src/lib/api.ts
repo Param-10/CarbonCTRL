@@ -20,6 +20,7 @@ export class ApiError extends Error {
 class ApiClient {
   private baseURL: string;
   private token: string | null = null;
+  private unauthorizedHandler: (() => void) | null = null;
 
   constructor() {
     this.baseURL = import.meta.env.VITE_API_URL || 'https://carbonctrl.onrender.com/api';
@@ -40,16 +41,21 @@ class ApiClient {
     return this.token;
   }
 
+  setUnauthorizedHandler(handler: (() => void) | null) {
+    this.unauthorizedHandler = handler;
+  }
+
   private async request(endpoint: string, options: RequestInit = {}) {
     const url = `${this.baseURL}${endpoint}`;
+    const sentToken = this.token;
     
     const config: RequestInit = {
+      ...options,
       headers: {
         'Content-Type': 'application/json',
-        ...(this.token && { Authorization: `Bearer ${this.token}` }),
+        ...(sentToken && { Authorization: `Bearer ${sentToken}` }),
         ...options.headers,
       },
-      ...options,
     };
 
     try {
@@ -57,6 +63,10 @@ class ApiClient {
       
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        if (response.status === 401 && sentToken && sentToken === this.token) {
+          this.setToken(null);
+          this.unauthorizedHandler?.();
+        }
         throw new ApiError(
           typeof errorData.error === 'string' ? errorData.error : `HTTP ${response.status}`,
           response.status,
@@ -72,10 +82,10 @@ class ApiClient {
   }
 
   // Auth methods
-  async signUp(email: string, password: string, firstName?: string, lastName?: string) {
+  async signUp(name: string, email: string, password: string) {
     const response = await this.request('/auth/signup', {
       method: 'POST',
-      body: JSON.stringify({ email, password, firstName, lastName }),
+      body: JSON.stringify({ name, email, password }),
     });
     
     if (response.token) {
@@ -114,6 +124,8 @@ class ApiClient {
   async signOut() {
     try {
       await this.request('/auth/signout', { method: 'POST' });
+    } catch (error) {
+      console.warn('Sign-out request failed; clearing the local session anyway:', error);
     } finally {
       this.setToken(null);
     }
@@ -126,14 +138,16 @@ class ApiClient {
     
     try {
       return await this.request('/auth/session');
-    } catch {
-      // If token is invalid, clear it
-      this.setToken(null);
-      return { session: null };
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        this.setToken(null);
+        return { session: null };
+      }
+      throw error;
     }
   }
 
-  async updateUser(data: { firstName?: string; lastName?: string; password?: string; currentPassword?: string }) {
+  async updateUser(data: { name?: string; password?: string; currentPassword?: string }) {
     const response = await this.request('/auth/user', {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -148,10 +162,10 @@ class ApiClient {
     return response;
   }
 
-  async googleAuth(googleToken: string, redirectUri: string) {
+  async googleAuth(credential: string) {
     const response = await this.request('/auth/google', {
       method: 'POST',
-      body: JSON.stringify({ googleToken, redirectUri }),
+      body: JSON.stringify({ credential }),
     });
     
     if (response.token) {
@@ -309,4 +323,4 @@ class ApiClient {
   }
 }
 
-export const apiClient = new ApiClient(); 
+export const apiClient = new ApiClient();

@@ -1,12 +1,14 @@
-import { useState } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Leaf, Lock, ArrowRight, ShieldAlert } from 'lucide-react';
 import { apiClient } from '../lib/api';
 
 export default function ResetPasswordPage() {
-  const [searchParams] = useSearchParams();
-  const token = searchParams.get('token') || '';
+  const [token] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get('token') || '');
+  useEffect(() => {
+    if (window.location.hash) window.history.replaceState({}, '', window.location.pathname);
+  }, []);
 
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');

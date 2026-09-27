@@ -38,7 +38,7 @@ const agent = request(app);
 const signup = (email, password, firstName = 'First', lastName = 'Last') =>
   agent
     .post('/api/auth/signup')
-    .send({ email, password, firstName, lastName });
+    .send({ email, password, name: `${firstName} ${lastName}` });
 
 const signin = (email, password) =>
   agent.post('/api/auth/signin').send({ email, password });
@@ -67,6 +67,7 @@ describe('auth flows (SQLite)', () => {
     expect(res.status).toBe(201);
     expect(res.body.token).toBeTruthy();
     expect(res.body.user.email).toBe('alice@example.com');
+    expect(res.body.user.name).toBe('Alice Wilson');
     expect(res.body.user.password).toBeUndefined();
     expect(res.body.user.id).toBeDefined();
     aliceToken = res.body.token;
@@ -87,6 +88,13 @@ describe('auth flows (SQLite)', () => {
 
     const oversized = await signup('big@example.com', 'x'.repeat(80));
     expect(oversized.status).toBe(400);
+  });
+
+  it('requires the name and validates the email at signup', async () => {
+    const noName = await agent.post('/api/auth/signup').send({ email: 'name@example.com', password: 'StrongPass1!' });
+    expect(noName.status).toBe(400);
+    const badEmail = await agent.post('/api/auth/signup').send({ name: 'Name', email: 'invalid', password: 'StrongPass1!' });
+    expect(badEmail.status).toBe(400);
   });
 
   it('rejects bad credentials', async () => {
@@ -183,6 +191,9 @@ describe('auth flows (SQLite)', () => {
       expect(challenge.body.requiresTwoFactor).toBe(true);
       expect(challenge.body.twoFactorToken).toBeTruthy();
 
+      const bypass = await session(challenge.body.twoFactorToken);
+      expect(bypass.status).toBe(401);
+
       const bad = await agent
         .post('/api/auth/signin/2fa')
         .send({ twoFactorToken: challenge.body.twoFactorToken, code: '000000' });
@@ -245,16 +256,35 @@ describe('auth flows (SQLite)', () => {
     });
   });
 
+  it('does not issue password reset links without an email provider', async () => {
+    const res = await agent.post('/api/auth/forgot-password').send({ email: 'bob@example.com' });
+    expect(res.status).toBe(503);
+    expect(res.body.resetUrl).toBeUndefined();
+  });
+
   describe('password reset', () => {
     let resetUrl;
+    let emailRequest;
+
+    beforeAll(() => {
+      process.env.RESEND_API_KEY = 'test-api-key';
+      process.env.RESET_FROM_EMAIL = 'CarbonCTRL <reset@example.com>';
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options) => {
+        emailRequest = { url, options };
+        return { ok: true, status: 200 };
+      });
+    });
 
     it('issues a reset link for an existing account', async () => {
       const res = await agent
         .post('/api/auth/forgot-password')
         .send({ email: 'bob@example.com' });
       expect(res.status).toBe(200);
-      expect(res.body.resetUrl).toBeTruthy();
-      resetUrl = res.body.resetUrl;
+      expect(res.body.resetUrl).toBeUndefined();
+      expect(emailRequest.url).toBe('https://api.resend.com/emails');
+      const message = JSON.parse(emailRequest.options.body);
+      expect(message.to).toEqual(['bob@example.com']);
+      resetUrl = message.text.match(/https?:\/\/\S+#token=\S+/)[0];
     });
 
     it('does not reveal whether an email exists', async () => {
@@ -266,7 +296,7 @@ describe('auth flows (SQLite)', () => {
     });
 
     it('resets the password and invalidates earlier sessions', async () => {
-      const token = new URL(resetUrl).searchParams.get('token');
+      const token = new URLSearchParams(new URL(resetUrl).hash.slice(1)).get('token');
 
       const res = await agent
         .post('/api/auth/reset-password')
@@ -284,15 +314,45 @@ describe('auth flows (SQLite)', () => {
         .send({ token: 'not-a-real-token', password: 'Whatever1!' });
       expect(res.status).toBe(400);
     });
+
+    afterAll(() => {
+      vi.restoreAllMocks();
+      delete process.env.RESEND_API_KEY;
+      delete process.env.RESET_FROM_EMAIL;
+    });
   });
 
   describe('Google account linking', () => {
+    let googleToken;
     it('creates a new account from a verified Google token', async () => {
       globalThis.__googlePayload = googlePayload('sub-new', 'gnew@example.com');
-      const res = await googleSignIn({ googleToken: 'mock-auth-code' });
+      const res = await googleSignIn({ credential: 'google-mock-id-token' });
       expect(res.status).toBe(200);
       expect(res.body.token).toBeTruthy();
       expect(res.body.user.email).toBe('gnew@example.com');
+      googleToken = res.body.token;
+    });
+
+    it('requires 2FA after Google sign-in when enabled', async () => {
+      const setup = await agent.post('/api/auth/2fa/setup')
+        .set('Authorization', `Bearer ${googleToken}`);
+      expect(setup.status).toBe(200);
+      const secret = setup.body.secret;
+      const enabled = await agent.post('/api/auth/2fa/verify')
+        .set('Authorization', `Bearer ${googleToken}`)
+        .send({ token: totp(secret), secret });
+      expect(enabled.status).toBe(200);
+
+      globalThis.__googlePayload = googlePayload('sub-new', 'gnew@example.com');
+      const challenge = await googleSignIn({ googleToken: 'mock-auth-code' });
+      expect(challenge.status).toBe(200);
+      expect(challenge.body.token).toBeUndefined();
+      expect(challenge.body.requiresTwoFactor).toBe(true);
+      expect((await session(challenge.body.twoFactorToken)).status).toBe(401);
+      const completed = await agent.post('/api/auth/signin/2fa')
+        .send({ twoFactorToken: challenge.body.twoFactorToken, code: totp(secret) });
+      expect(completed.status).toBe(200);
+      expect(completed.body.token).toBeTruthy();
     });
 
     it('requires the existing password before linking (LINK_PASSWORD_REQUIRED)', async () => {
@@ -316,6 +376,30 @@ describe('auth flows (SQLite)', () => {
       globalThis.__googlePayload = googlePayload('sub-linky', 'linky@example.com');
       const again = await googleSignIn({ googleToken: 'mock-auth-code' });
       expect(again.status).toBe(200);
+    });
+
+    it('waits for 2FA before linking Google to a protected account', async () => {
+      const created = await signup('protected-link@example.com', 'LinkPass1!', 'Protected', 'User');
+      const setup = await agent.post('/api/auth/2fa/setup')
+        .set('Authorization', `Bearer ${created.body.token}`);
+      const secret = setup.body.secret;
+      await agent.post('/api/auth/2fa/verify')
+        .set('Authorization', `Bearer ${created.body.token}`)
+        .send({ token: totp(secret), secret });
+
+      globalThis.__googlePayload = googlePayload('sub-protected-link', 'protected-link@example.com');
+      const first = await googleSignIn({ credential: 'google-mock-id-token' });
+      expect(first.body.code).toBe('LINK_PASSWORD_REQUIRED');
+      const challenge = await googleSignIn({ idToken: first.body.idToken, password: 'LinkPass1!' });
+      expect(challenge.body.requiresTwoFactor).toBe(true);
+      const { usersRepo } = await import('../db/repos.js');
+      expect(usersRepo.findByEmail('protected-link@example.com').googleId).toBeNull();
+
+      const completed = await agent.post('/api/auth/signin/2fa')
+        .send({ twoFactorToken: challenge.body.twoFactorToken, code: totp(secret) });
+      expect(completed.status).toBe(200);
+      expect(completed.body.token).toBeTruthy();
+      expect(usersRepo.findByEmail('protected-link@example.com').googleId).toBe('sub-protected-link');
     });
 
     it('rejects an incorrect password during linking', async () => {

@@ -15,6 +15,7 @@ import { sqliteTable, integer, text, real, index } from 'drizzle-orm/sqlite-core
 export const users = sqliteTable('users', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   email: text('email').notNull().unique(),
+  name: text('name'),
   // null for Google OAuth users (matches old schema: password optional when googleId set)
   password: text('password'),
   firstName: text('first_name'),

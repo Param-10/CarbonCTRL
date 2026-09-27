@@ -63,11 +63,12 @@ export const usersRepo = {
     return result.changes > 0;
   },
 
-  create({ email, password = null, firstName, lastName, googleId, isEmailVerified = false }) {
+  create({ email, password = null, name, firstName, lastName, googleId, isEmailVerified = false }) {
     const row = db
       .insert(users)
       .values({
         email,
+        name: name ?? null,
         password,
         firstName: firstName ?? null,
         lastName: lastName ?? null,
@@ -86,6 +87,7 @@ export const usersRepo = {
     const set = { updatedAt: now() };
     const allowed = [
       'password',
+      'name',
       'firstName',
       'lastName',
       'isEmailVerified',

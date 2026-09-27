@@ -8,6 +8,7 @@ interface User {
   _id: string;
   id: string; // Keep for compatibility
   email: string;
+  name?: string;
   firstName?: string;
   lastName?: string;
   createdAt: string;
@@ -33,14 +34,20 @@ interface AuthState {
   // A saved session could not be checked (server unreachable), as opposed to rejected
   sessionCheckFailed: boolean;
   signIn: (email: string, password: string) => Promise<TwoFactorRequired | null>;
-  signUp: (email: string, password: string) => Promise<void>;
+  signUp: (name: string, email: string, password: string) => Promise<void>;
   signInWith2FA: (twoFactorToken: string, code: string) => Promise<void>;
   signOut: () => Promise<void>;
   setSession: (session: Session | null) => void;
   initializeAuth: () => Promise<void>;
 }
 
-export const useAuthStore = create<AuthState>((set) => ({
+const resetUserData = () => {
+  useCompanyStore.getState().reset();
+  useCarbonStore.getState().reset();
+  useOffsetStore.getState().reset();
+};
+
+export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   session: null,
   loading: true,
@@ -58,6 +65,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
       const user = { ...response.user, id: response.user._id }; // Add id for compatibility
       const session = { access_token: response.token, user };
+      resetUserData();
       set({ user, session, sessionCheckFailed: false });
       return null;
     } finally {
@@ -70,17 +78,19 @@ export const useAuthStore = create<AuthState>((set) => ({
       const response = await apiClient.signInWith2FA(twoFactorToken, code);
       const user = { ...response.user, id: response.user._id }; // Add id for compatibility
       const session = { access_token: response.token, user };
+      resetUserData();
       set({ user, session, sessionCheckFailed: false });
     } finally {
       set({ loading: false });
     }
   },
   
-  signUp: async (email, password) => {
+  signUp: async (name, email, password) => {
     try {
-      const response = await apiClient.signUp(email, password);
+      const response = await apiClient.signUp(name, email, password);
       const user = { ...response.user, id: response.user._id }; // Add id for compatibility
       const session = { access_token: response.token, user };
+      resetUserData();
       set({ user, session, sessionCheckFailed: false });
     } finally {
       set({ loading: false });
@@ -90,13 +100,11 @@ export const useAuthStore = create<AuthState>((set) => ({
   signOut: async () => {
     try {
       await apiClient.signOut();
+    } finally {
       // Tear down user-scoped caches so another account's data never renders
       // in this session (stores cache the last fetched profiles/scores).
-      useCompanyStore.getState().reset();
-      useCarbonStore.getState().reset();
-      useOffsetStore.getState().reset();
+      resetUserData();
       set({ user: null, session: null, sessionCheckFailed: false });
-    } finally {
       set({ loading: false });
     }
   },
@@ -104,21 +112,23 @@ export const useAuthStore = create<AuthState>((set) => ({
   setSession: (session) => {
     if (session) {
       const user = { ...session.user, id: session.user._id }; // Add id for compatibility
+      if (get().user?._id !== user._id) resetUserData();
       set({ session: { ...session, user }, user, loading: false, sessionCheckFailed: false });
     } else {
-      useCompanyStore.getState().reset();
-      useCarbonStore.getState().reset();
-      useOffsetStore.getState().reset();
+      resetUserData();
       set({ session: null, user: null, loading: false, sessionCheckFailed: false });
     }
   },
   
   initializeAuth: async () => {
+    const tokenAtStart = apiClient.getToken();
     try {
       const response = await apiClient.getSession();
+      if (apiClient.getToken() !== tokenAtStart) return;
       if (response.session) {
         const user = { ...response.session.user, id: response.session.user._id }; // Add id for compatibility
         const session = { ...response.session, user };
+        if (get().user?._id !== user._id) resetUserData();
         set({ session, user, sessionCheckFailed: false });
       } else {
         set({ session: null, user: null, sessionCheckFailed: false });
@@ -135,3 +145,6 @@ export const useAuthStore = create<AuthState>((set) => ({
 
 // Note: With JWT tokens, we don't need real-time auth state changes
 // Auth state is managed through the store and API calls
+apiClient.setUnauthorizedHandler(() => {
+  useAuthStore.getState().setSession(null);
+});

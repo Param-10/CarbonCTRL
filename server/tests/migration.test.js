@@ -39,6 +39,7 @@ describe('SQLite schema migration', () => {
     expect(columns).toContain('reset_password_expires');
     expect(columns).toContain('two_factor_secret');
     expect(columns).toContain('google_id');
+    expect(columns).toContain('name');
   });
 
   it('enforces the unique email constraint', () => {
