@@ -1,23 +1,34 @@
 import jwt from 'jsonwebtoken';
-import User from '../models/User.js';
+import { usersRepo } from '../db/repos.js';
 
 const auth = async (req, res, next) => {
   try {
     const token = req.header('Authorization')?.replace('Bearer ', '');
-    
+
     if (!token) {
       return res.status(401).json({ error: 'Access denied. No token provided.' });
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.userId).select('-password');
-    
+    const user = await usersRepo.findById(decoded.userId);
+
     if (!user) {
       return res.status(401).json({ error: 'Invalid token. User not found.' });
     }
 
-    req.user = user;
-    req.userId = user._id;
+    // tokenVersion is bumped whenever the password changes (or is discarded
+    // during Google linking), so any session issued before that must die.
+    const tokenVersion = decoded.tokenVersion || 0;
+    const userVersion = user.tokenVersion || 0;
+    if (tokenVersion !== userVersion) {
+      return res.status(401).json({
+        error: 'Session has been invalidated. Please sign in again.',
+      });
+    }
+
+    // Attach a plain, password-stripped user object plus the numeric id.
+    req.user = usersRepo.toSafeUser(user);
+    req.userId = user.id;
     next();
   } catch (error) {
     if (error.name === 'JsonWebTokenError') {
@@ -30,4 +41,4 @@ const auth = async (req, res, next) => {
   }
 };
 
-export default auth; 
+export default auth;

@@ -1,3 +1,22 @@
+/**
+ * API error that carries the server's machine-readable `code` and full error
+ * payload, so callers can branch on structured failures (e.g. the
+ * LINK_PASSWORD_REQUIRED Google-account-linking challenge).
+ */
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+  payload: Record<string, unknown>;
+
+  constructor(message: string, status: number, payload: Record<string, unknown> = {}) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = typeof payload.code === 'string' ? payload.code : undefined;
+    this.payload = payload;
+  }
+}
+
 class ApiClient {
   private baseURL: string;
   private token: string | null = null;
@@ -38,7 +57,11 @@ class ApiClient {
       
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-        throw new Error(errorData.error || `HTTP ${response.status}`);
+        throw new ApiError(
+          typeof errorData.error === 'string' ? errorData.error : `HTTP ${response.status}`,
+          response.status,
+          errorData
+        );
       }
 
       return response.json();
@@ -75,6 +98,19 @@ class ApiClient {
     return response;
   }
 
+  async signInWith2FA(twoFactorToken: string, code: string) {
+    const response = await this.request('/auth/signin/2fa', {
+      method: 'POST',
+      body: JSON.stringify({ twoFactorToken, code }),
+    });
+    
+    if (response.token) {
+      this.setToken(response.token);
+    }
+    
+    return response;
+  }
+
   async signOut() {
     try {
       await this.request('/auth/signout', { method: 'POST' });
@@ -97,17 +133,25 @@ class ApiClient {
     }
   }
 
-  async updateUser(data: { firstName?: string; lastName?: string; password?: string }) {
-    return this.request('/auth/user', {
+  async updateUser(data: { firstName?: string; lastName?: string; password?: string; currentPassword?: string }) {
+    const response = await this.request('/auth/user', {
       method: 'PUT',
       body: JSON.stringify(data),
     });
+
+    // A password change bumps tokenVersion server-side and returns a fresh
+    // token — adopt it so the current session survives.
+    if (response.token) {
+      this.setToken(response.token);
+    }
+
+    return response;
   }
 
-  async googleAuth(googleToken: string, email: string, name: string) {
+  async googleAuth(googleToken: string, redirectUri: string) {
     const response = await this.request('/auth/google', {
       method: 'POST',
-      body: JSON.stringify({ googleToken, email, name }),
+      body: JSON.stringify({ googleToken, redirectUri }),
     });
     
     if (response.token) {
@@ -115,6 +159,45 @@ class ApiClient {
     }
     
     return response;
+  }
+
+  /**
+   * Complete a Google account link that requires proving (or discarding) the
+   * existing account's password. Carries the reusable Google ID token returned
+   * in the LINK_PASSWORD_REQUIRED error rather than a single-use auth code.
+   */
+  async googleLink(idToken: string, options: { password?: string; discardPassword?: boolean }) {
+    const response = await this.request('/auth/google', {
+      method: 'POST',
+      body: JSON.stringify({ idToken, ...options }),
+    });
+
+    if (response.token) {
+      this.setToken(response.token);
+    }
+
+    return response;
+  }
+
+  async forgotPassword(email: string) {
+    return this.request('/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  }
+
+  async resetPassword(token: string, password: string) {
+    return this.request('/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token, password }),
+    });
+  }
+
+  async deleteAccount(password?: string) {
+    return this.request('/auth/account', {
+      method: 'DELETE',
+      body: JSON.stringify({ password }),
+    });
   }
 
   async setup2FA() {
@@ -130,9 +213,10 @@ class ApiClient {
     });
   }
 
-  async disable2FA() {
+  async disable2FA(code?: string) {
     return this.request('/auth/2fa/disable', {
       method: 'POST',
+      body: JSON.stringify({ token: code }),
     });
   }
 
@@ -199,6 +283,10 @@ class ApiClient {
   }
 
   // Gemini AI methods
+  async getEmissionFactors() {
+    return this.request('/gemini/emission-factors');
+  }
+
   async calculateCarbonScore(data: Record<string, unknown>) {
     return this.request('/gemini/carbon-calculator', {
       method: 'POST',

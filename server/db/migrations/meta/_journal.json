@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1790287097213,
+      "tag": "0000_left_lady_bullseye",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1790451400373,
+      "tag": "0001_add_token_version",
+      "breakpoints": true
+    }
+  ]
+}

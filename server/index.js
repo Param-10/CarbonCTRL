@@ -1,9 +1,12 @@
 import express from 'express';
-import mongoose from 'mongoose';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
+
+// Initializes the SQLite database + applies migrations on first import.
+import './db/index.js';
+import { pingDatabase } from './db/index.js';
 
 import authRoutes from './routes/auth.js';
 import carbonRoutes from './routes/carbon.js';
@@ -21,6 +24,8 @@ app.use(helmet());
 const defaultAllowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:3000',
   'https://carbonctrl.us',
   'https://carbonctrl.netlify.app'
 ];
@@ -55,14 +60,6 @@ app.use(limiter);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// MongoDB connection
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-.then(() => console.log('Connected to MongoDB'))
-.catch(err => console.error('MongoDB connection error:', err));
-
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/carbon', carbonRoutes);
@@ -70,15 +67,23 @@ app.use('/api/company', companyRoutes);
 app.use('/api/gemini', geminiRoutes);
 app.use('/api/ml', mlRoutes);
 
-// Health check endpoint
+// Health check endpoint (SQLite is local, so this reflects DB availability)
 app.get('/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+  try {
+    const dbOk = pingDatabase();
+    if (!dbOk) {
+      return res.status(503).json({ status: 'ERROR', database: 'unavailable', timestamp: new Date().toISOString() });
+    }
+    res.json({ status: 'OK', database: 'connected', storage: 'sqlite', timestamp: new Date().toISOString() });
+  } catch (error) {
+    res.status(503).json({ status: 'ERROR', database: 'unavailable', error: error.message });
+  }
 });
 
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack);
-  res.status(500).json({ 
+  res.status(500).json({
     error: 'Something went wrong!',
     message: process.env.NODE_ENV === 'development' ? err.message : undefined
   });
@@ -92,4 +97,4 @@ app.use('*', (req, res) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-}); 
+});

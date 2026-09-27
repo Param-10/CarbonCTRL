@@ -10,7 +10,7 @@ interface ProtectedRouteProps {
 
 const ProtectedRoute = ({ children, requireCompanyProfile = false }: ProtectedRouteProps) => {
   const { user } = useAuthStore();
-  const { profile, loading, fetchProfile } = useCompanyStore();
+  const { profile, loading, loaded, fetchProfile } = useCompanyStore();
   const location = useLocation();
 
   useEffect(() => {
@@ -31,8 +31,11 @@ const ProtectedRoute = ({ children, requireCompanyProfile = false }: ProtectedRo
       return <>{children}</>;
     }
     
-    // Wait for profile loading to complete before making redirect decision
-    if (loading) {
+    // Wait for the profile lookup to finish before deciding anything. The
+    // store's `loaded` flag starts false, so the first paint shows a spinner
+    // instead of bouncing the user to /company-profile before the fetch
+    // completes (the redirect race).
+    if (!loaded || loading) {
       return (
         <div className="min-h-screen bg-gradient-to-b from-gray-800 via-emerald-900 to-gray-800 flex items-center justify-center">
           <div className="text-center">
@@ -44,7 +47,7 @@ const ProtectedRoute = ({ children, requireCompanyProfile = false }: ProtectedRo
     }
     
     // Only redirect if profile loading is done and no profile exists
-    if (!loading && (!profile || !profile.name)) {
+    if (!profile || !profile.name) {
       return <Navigate to="/company-profile" replace />;
     }
   }
@@ -52,4 +55,4 @@ const ProtectedRoute = ({ children, requireCompanyProfile = false }: ProtectedRo
   return <>{children}</>;
 };
 
-export default ProtectedRoute; 
+export default ProtectedRoute;

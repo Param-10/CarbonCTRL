@@ -23,6 +23,9 @@ const SettingsPage = () => {
   });
   
   const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleting, setDeleting] = useState(false);
   const [notifications, setNotifications] = useState<{
     type: 'success' | 'error';
     message: string;
@@ -71,7 +74,8 @@ const SettingsPage = () => {
     
     try {
       await apiClient.updateUser({
-        password: passwordData.newPassword
+        password: passwordData.newPassword,
+        currentPassword: passwordData.currentPassword
       });
       
       setPasswordData({
@@ -93,14 +97,20 @@ const SettingsPage = () => {
   };
   
   const handleDeleteAccount = async () => {
-    if (!confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
+    // Step 0: first click — confirm intent
+    if (!confirmingDelete) {
+      if (!confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
+        return;
+      }
+      setConfirmingDelete(true);
       return;
     }
-    
+
+    // Step 1: confirmed — send the password for re-authentication so a stolen
+    // session token alone cannot delete the account.
+    setDeleting(true);
     try {
-      // In a real implementation, you would typically have a secure server-side
-      // function to handle deletion of all user data
-      
+      await apiClient.deleteAccount(deletePassword || undefined);
       // Sign out the user after successful deletion
       await signOut();
       // Redirect to the landing page
@@ -109,6 +119,7 @@ const SettingsPage = () => {
       const errorMessage = err instanceof Error ? err.message : 'Failed to delete account';
       setNotifications({ type: 'error', message: errorMessage });
       setTimeout(() => setNotifications(null), 3000);
+      setDeleting(false);
     }
   };
 
@@ -212,6 +223,17 @@ const SettingsPage = () => {
           {isChangingPassword && (
             <div className="grid gap-4 p-4 border border-gray-700/50 rounded-lg bg-gray-800/20">
               <div>
+                <label className="block font-mono text-sm text-emerald-100/70 mb-2">Current Password</label>
+                <input
+                  type="password"
+                  value={passwordData.currentPassword}
+                  onChange={(e) => setPasswordData({ ...passwordData, currentPassword: e.target.value })}
+                  className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-4 py-3 text-white font-mono placeholder-gray-400 focus:border-emerald-500/50 focus:outline-none"
+                  placeholder="Enter current password"
+                />
+              </div>
+
+              <div>
                 <label className="block font-mono text-sm text-emerald-100/70 mb-2">New Password</label>
                 <input
                   type="password"
@@ -270,12 +292,45 @@ const SettingsPage = () => {
             <p className="font-mono text-sm text-gray-400 mb-4">
               Permanently delete your account and all associated data. This action cannot be undone.
             </p>
-            <button
-              onClick={handleDeleteAccount}
-              className="bg-red-500/20 hover:bg-red-500/30 text-red-300 font-mono text-sm py-2 px-4 rounded-lg transition-colors"
-            >
-              Delete Account
-            </button>
+            {confirmingDelete ? (
+              <div className="space-y-3">
+                {(user as { hasPassword?: boolean }).hasPassword && (
+                  <input
+                    type="password"
+                    value={deletePassword}
+                    onChange={(e) => setDeletePassword(e.target.value)}
+                    placeholder="Enter your password to confirm"
+                    className="w-full bg-gray-800/50 border border-red-500/30 rounded-lg px-4 py-3 text-white font-mono placeholder-gray-500 focus:border-red-500/50 focus:outline-none"
+                  />
+                )}
+                <p className="font-mono text-xs text-red-300/80">
+                  Confirm deletion: your account and all carbon data will be permanently removed.
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={handleDeleteAccount}
+                    disabled={deleting}
+                    className="bg-red-500/30 hover:bg-red-500/40 text-red-200 font-mono text-sm py-2 px-4 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    {deleting ? 'Deleting...' : 'Permanently Delete'}
+                  </button>
+                  <button
+                    onClick={() => { setConfirmingDelete(false); setDeletePassword(''); }}
+                    disabled={deleting}
+                    className="bg-gray-700/50 hover:bg-gray-700/70 text-white font-mono text-sm py-2 px-4 rounded-lg transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={handleDeleteAccount}
+                className="bg-red-500/20 hover:bg-red-500/30 text-red-300 font-mono text-sm py-2 px-4 rounded-lg transition-colors"
+              >
+                Delete Account
+              </button>
+            )}
           </div>
         </div>
       </div>

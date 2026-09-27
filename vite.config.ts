@@ -53,6 +53,14 @@ export default defineConfig({
     host: true,
     open: true,
     cors: true,
+    // Proxy API calls (e.g. MLDashboard's relative /api/ml/... fetches) to
+    // the Express backend in development.
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true
+      }
+    },
     hmr: {
       overlay: true
     }

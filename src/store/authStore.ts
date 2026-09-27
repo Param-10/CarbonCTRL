@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { apiClient } from '../lib/api';
+import { useCompanyStore } from './companyStore';
 
 interface User {
   _id: string;
@@ -18,12 +19,18 @@ interface Session {
   user: User;
 }
 
+/** Returned by signIn when the account requires a 2FA code to complete login. */
+interface TwoFactorRequired {
+  twoFactorToken: string;
+}
+
 interface AuthState {
   user: User | null;
   session: Session | null;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: (email: string, password: string) => Promise<TwoFactorRequired | null>;
   signUp: (email: string, password: string) => Promise<void>;
+  signInWith2FA: (twoFactorToken: string, code: string) => Promise<void>;
   signOut: () => Promise<void>;
   setSession: (session: Session | null) => void;
   initializeAuth: () => Promise<void>;
@@ -37,6 +44,25 @@ export const useAuthStore = create<AuthState>((set) => ({
   signIn: async (email, password) => {
     try {
       const response = await apiClient.signIn(email, password);
+
+      // 2FA-protected account: the API only returns a short-lived challenge
+      // token, no session. Bubble it up so the UI can ask for the code.
+      if (response.requiresTwoFactor) {
+        return { twoFactorToken: response.twoFactorToken };
+      }
+
+      const user = { ...response.user, id: response.user._id }; // Add id for compatibility
+      const session = { access_token: response.token, user };
+      set({ user, session });
+      return null;
+    } finally {
+      set({ loading: false });
+    }
+  },
+  
+  signInWith2FA: async (twoFactorToken, code) => {
+    try {
+      const response = await apiClient.signInWith2FA(twoFactorToken, code);
       const user = { ...response.user, id: response.user._id }; // Add id for compatibility
       const session = { access_token: response.token, user };
       set({ user, session });
@@ -59,6 +85,9 @@ export const useAuthStore = create<AuthState>((set) => ({
   signOut: async () => {
     try {
       await apiClient.signOut();
+      // Tear down user-scoped caches so another account's data never renders
+      // in this session (the company store caches the last fetched profile).
+      useCompanyStore.getState().reset();
       set({ user: null, session: null });
     } finally {
       set({ loading: false });

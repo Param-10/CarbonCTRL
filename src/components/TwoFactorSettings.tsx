@@ -11,9 +11,11 @@ interface TwoFactorSettingsProps {
 export const TwoFactorSettings: React.FC<TwoFactorSettingsProps> = ({ user, onUpdate }) => {
   const [isEnabled, setIsEnabled] = useState(false);
   const [isSetupMode, setIsSetupMode] = useState(false);
+  const [isDisableMode, setIsDisableMode] = useState(false);
   const [qrCode, setQrCode] = useState('');
   const [secret, setSecret] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
+  const [disableCode, setDisableCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -63,8 +65,12 @@ export const TwoFactorSettings: React.FC<TwoFactorSettingsProps> = ({ user, onUp
       setLoading(true);
       setError('');
       
-      await apiClient.disable2FA();
+      // Disabling requires the current TOTP code so a leaked session token
+      // cannot silently downgrade the account's security.
+      await apiClient.disable2FA(disableCode);
       setIsEnabled(false);
+      setIsDisableMode(false);
+      setDisableCode('');
       onUpdate();
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to disable 2FA';
@@ -165,26 +171,57 @@ export const TwoFactorSettings: React.FC<TwoFactorSettingsProps> = ({ user, onUp
           <div className="text-red-400 text-sm">{error}</div>
         )}
 
-        <div className="flex gap-3">
-          {!isEnabled ? (
-            <button
-              onClick={handleSetup2FA}
-              disabled={loading}
-              className="bg-emerald-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-emerald-700 transition-colors duration-200 disabled:opacity-50"
-            >
-              {loading ? 'Setting up...' : 'Enable 2FA'}
-            </button>
-          ) : (
-            <button
-              onClick={handleDisable2FA}
-              disabled={loading}
-              className="bg-red-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-red-700 transition-colors duration-200 disabled:opacity-50"
-            >
-              {loading ? 'Disabling...' : 'Disable 2FA'}
-            </button>
-          )}
-        </div>
+        {isEnabled && isDisableMode ? (
+          <div className="space-y-3 p-4 border border-red-500/30 rounded-lg bg-red-900/10">
+            <p className="text-emerald-100/70 text-sm">
+              Enter your current 6-digit code to disable 2FA:
+            </p>
+            <input
+              type="text"
+              value={disableCode}
+              onChange={(e) => setDisableCode(e.target.value)}
+              className="w-full px-4 py-3 bg-gray-700/50 border border-red-500/30 rounded-lg text-emerald-100 focus:border-red-400 focus:outline-none"
+              placeholder="123456"
+              maxLength={6}
+            />
+            <div className="flex gap-3">
+              <button
+                onClick={handleDisable2FA}
+                disabled={loading || !disableCode}
+                className="flex-1 bg-red-600 text-white py-2 px-4 rounded-lg font-semibold hover:bg-red-700 transition-colors duration-200 disabled:opacity-50"
+              >
+                {loading ? 'Disabling...' : 'Confirm Disable'}
+              </button>
+              <button
+                onClick={() => { setIsDisableMode(false); setDisableCode(''); }}
+                className="px-4 py-2 text-emerald-100/70 hover:text-emerald-100 transition-colors duration-200"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex gap-3">
+            {!isEnabled ? (
+              <button
+                onClick={handleSetup2FA}
+                disabled={loading}
+                className="bg-emerald-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-emerald-700 transition-colors duration-200 disabled:opacity-50"
+              >
+                {loading ? 'Setting up...' : 'Enable 2FA'}
+              </button>
+            ) : (
+              <button
+                onClick={() => setIsDisableMode(true)}
+                disabled={loading}
+                className="bg-red-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-red-700 transition-colors duration-200 disabled:opacity-50"
+              >
+                {loading ? 'Disabling...' : 'Disable 2FA'}
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
-}; 
+};
