@@ -20,21 +20,29 @@ npm install
 
 2) Backend env (server/.env)
 ```
-MONGODB_URI=...
-JWT_SECRET=...
+MONGODB_URI=...          # required
+JWT_SECRET=...           # required, long random string
 PORT=5000
 FRONTEND_URL=http://localhost:5173
+GOOGLE_CLIENT_ID=...     # Google OAuth web client ID; Google sign-in is disabled without it
+TRUST_PROXY=1            # production only: number of proxies in front of the API (e.g. Render)
 ```
 
 3) Frontend env (root/.env.local)
 ```
 VITE_API_URL=http://localhost:5000/api
+VITE_GOOGLE_CLIENT_ID=...  # same value as GOOGLE_CLIENT_ID
 ```
 
 4) Run
 ```
-cd server && node index.js
+npm run server
 npm run dev
+```
+
+5) Test
+```
+npm test
 ```
 
 ## ML Models & Limitations

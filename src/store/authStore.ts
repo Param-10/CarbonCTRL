@@ -28,6 +28,8 @@ interface AuthState {
   user: User | null;
   session: Session | null;
   loading: boolean;
+  // A saved session could not be checked (server unreachable), as opposed to rejected
+  sessionCheckFailed: boolean;
   signIn: (email: string, password: string) => Promise<TwoFactorRequired | null>;
   signUp: (email: string, password: string) => Promise<void>;
   signInWith2FA: (twoFactorToken: string, code: string) => Promise<void>;
@@ -40,6 +42,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   session: null,
   loading: true,
+  sessionCheckFailed: false,
   
   signIn: async (email, password) => {
     try {
@@ -53,7 +56,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
       const user = { ...response.user, id: response.user._id }; // Add id for compatibility
       const session = { access_token: response.token, user };
-      set({ user, session });
+      set({ user, session, sessionCheckFailed: false });
       return null;
     } finally {
       set({ loading: false });
@@ -65,7 +68,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       const response = await apiClient.signInWith2FA(twoFactorToken, code);
       const user = { ...response.user, id: response.user._id }; // Add id for compatibility
       const session = { access_token: response.token, user };
-      set({ user, session });
+      set({ user, session, sessionCheckFailed: false });
     } finally {
       set({ loading: false });
     }
@@ -76,7 +79,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       const response = await apiClient.signUp(email, password);
       const user = { ...response.user, id: response.user._id }; // Add id for compatibility
       const session = { access_token: response.token, user };
-      set({ user, session });
+      set({ user, session, sessionCheckFailed: false });
     } finally {
       set({ loading: false });
     }
@@ -88,7 +91,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       // Tear down user-scoped caches so another account's data never renders
       // in this session (the company store caches the last fetched profile).
       useCompanyStore.getState().reset();
-      set({ user: null, session: null });
+      set({ user: null, session: null, sessionCheckFailed: false });
     } finally {
       set({ loading: false });
     }
@@ -97,9 +100,9 @@ export const useAuthStore = create<AuthState>((set) => ({
   setSession: (session) => {
     if (session) {
       const user = { ...session.user, id: session.user._id }; // Add id for compatibility
-      set({ session: { ...session, user }, user, loading: false });
+      set({ session: { ...session, user }, user, loading: false, sessionCheckFailed: false });
     } else {
-      set({ session: null, user: null, loading: false });
+      set({ session: null, user: null, loading: false, sessionCheckFailed: false });
     }
   },
   
@@ -109,10 +112,14 @@ export const useAuthStore = create<AuthState>((set) => ({
       if (response.session) {
         const user = { ...response.session.user, id: response.session.user._id }; // Add id for compatibility
         const session = { ...response.session, user };
-        set({ session, user });
+        set({ session, user, sessionCheckFailed: false });
       } else {
-        set({ session: null, user: null });
+        set({ session: null, user: null, sessionCheckFailed: false });
       }
+    } catch (error) {
+      // The token is kept (only a 401 clears it), so retrying can restore the session
+      console.error('Could not check the stored session:', error);
+      set({ sessionCheckFailed: true });
     } finally {
       set({ loading: false });
     }

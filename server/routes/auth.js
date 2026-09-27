@@ -4,11 +4,25 @@ import jwt from 'jsonwebtoken';
 import speakeasy from 'speakeasy';
 import QRCode from 'qrcode';
 import crypto from 'crypto';
+import rateLimit from 'express-rate-limit';
 import { OAuth2Client } from 'google-auth-library';
 import { usersRepo, deleteUserAccount } from '../db/repos.js';
 import auth from '../middleware/auth.js';
 
 const router = express.Router();
+
+// Stricter limit on endpoints that check credentials, to slow down brute forcing.
+// Only failed attempts count, so people sharing an IP (office, school) are not
+// locked out by normal use.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'test',
+  message: { error: 'Too many attempts. Please try again in a few minutes.' }
+});
 
 // Generate JWT token. Embeds the user's current tokenVersion so a password
 // change / reset / discard bumps the version and invalidates old sessions.
@@ -57,7 +71,7 @@ const hashResetToken = (token) =>
   crypto.createHash('sha256').update(token).digest('hex');
 
 // Sign up
-router.post('/signup', async (req, res) => {
+router.post('/signup', authLimiter, async (req, res) => {
   try {
     const { email, password, firstName, lastName } = req.body;
 
@@ -106,7 +120,7 @@ router.post('/signup', async (req, res) => {
 });
 
 // Sign in
-router.post('/signin', async (req, res) => {
+router.post('/signin', authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -164,7 +178,7 @@ router.post('/signin', async (req, res) => {
 });
 
 // Complete sign-in with a 2FA code (second factor)
-router.post('/signin/2fa', async (req, res) => {
+router.post('/signin/2fa', authLimiter, async (req, res) => {
   try {
     const { twoFactorToken, code } = req.body;
 
@@ -234,7 +248,7 @@ router.get('/session', auth, async (req, res) => {
 });
 
 // Update user
-router.put('/user', auth, async (req, res) => {
+router.put('/user', authLimiter, auth, async (req, res) => {
   try {
     const { firstName, lastName, password, currentPassword } = req.body;
     const user = usersRepo.findById(req.userId);
@@ -309,7 +323,7 @@ router.post('/signout', auth, async (req, res) => {
 // (public/oauth-callback.html) and sends it here. The server exchanges the
 // code for tokens, cryptographically verifies the Google ID token, and
 // find-or-creates the user from the verified claims (sub = googleId).
-router.post('/google', async (req, res) => {
+router.post('/google', authLimiter, async (req, res) => {
   try {
     const { googleToken: authCode, redirectUri, idToken, password, discardPassword } = req.body;
 
@@ -619,7 +633,7 @@ router.post('/2fa/disable', auth, async (req, res) => {
 // Delete account — requires the password again so a stolen session token
 // cannot be used alone to destroy the account. All user data is removed in a
 // single transaction.
-router.delete('/account', auth, async (req, res) => {
+router.delete('/account', authLimiter, auth, async (req, res) => {
   try {
     const { password } = req.body || {};
     const user = usersRepo.findById(req.userId);

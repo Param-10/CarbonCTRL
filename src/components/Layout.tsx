@@ -30,7 +30,7 @@ export default function Layout() {
     // Clear saved page before signing out
     localStorage.removeItem('carbonctrl_last_page');
     await signOut();
-    navigate('/auth');
+    navigate('/', { replace: true });
   };
 
   if (!user) {

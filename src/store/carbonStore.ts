@@ -28,13 +28,21 @@ interface CarbonState {
   calculateScore: (userId: string) => Promise<void>;
   resetScore: (userId: string) => Promise<void>;
   loadSavedData: (userId: string) => Promise<void>;
+  reset: () => void;
 }
 
-export const useCarbonStore = create<CarbonState>((set, get) => ({
+const initialState = {
   activities: [],
   carbonScore: null,
   loading: false,
   initialized: false,
+};
+
+export const useCarbonStore = create<CarbonState>((set, get) => ({
+  ...initialState,
+
+  // Clears the signed-in user's carbon data, e.g. on sign-out
+  reset: () => set(initialState),
 
   addActivity: async (activity, userId) => {
     if (!userId) {
