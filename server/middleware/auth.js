@@ -10,11 +10,6 @@ const auth = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    // A 2FA challenge proves only the first factor. It must never authorize
-    // ordinary API requests, even when the account's tokenVersion is zero.
-    if (decoded.purpose) {
-      return res.status(401).json({ error: 'Complete two-factor authentication first.' });
-    }
     const user = await usersRepo.findById(decoded.userId);
 
     if (!user) {

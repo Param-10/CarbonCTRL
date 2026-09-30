@@ -17,6 +17,34 @@ export class ApiError extends Error {
   }
 }
 
+/** A readable message for a failed response that didn't include one. */
+function messageForStatus(status: number) {
+  if (status === 429) return 'Too many requests right now. Please wait a minute and try again.';
+  if (status === 401) return 'Your session has expired. Please sign in again.';
+  if (status === 404) return 'That was not found on the server.';
+  if (status >= 500) return 'The server ran into a problem. Please try again in a moment.';
+  return `Request failed (HTTP ${status})`;
+}
+
+const SERVER_UNREACHABLE = "Can't reach the CarbonCTRL server. Check your internet connection, or that the server is running.";
+
+/** Turn a failed response into an ApiError with the server's message, or a clear default. */
+async function errorFromResponse(response: Response) {
+  const payload = await response.json().catch(() => ({}));
+  const message = typeof payload.error === 'string' ? payload.error : messageForStatus(response.status);
+  return new ApiError(message, response.status, payload);
+}
+
+/** fetch that reports an unreachable server as a readable ApiError (status 0). */
+async function fetchOrExplain(url: string, init?: RequestInit) {
+  try {
+    return await fetch(url, init);
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    throw new ApiError(SERVER_UNREACHABLE, 0);
+  }
+}
+
 class ApiClient {
   private baseURL: string;
   private token: string | null = null;
@@ -59,19 +87,14 @@ class ApiClient {
     };
 
     try {
-      const response = await fetch(url, config);
-      
+      const response = await fetchOrExplain(url, config);
+
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
         if (response.status === 401 && sentToken && sentToken === this.token) {
           this.setToken(null);
           this.unauthorizedHandler?.();
         }
-        throw new ApiError(
-          typeof errorData.error === 'string' ? errorData.error : `HTTP ${response.status}`,
-          response.status,
-          errorData
-        );
+        throw await errorFromResponse(response);
       }
 
       return response.json();
@@ -99,19 +122,6 @@ class ApiClient {
     const response = await this.request('/auth/signin', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
-    });
-    
-    if (response.token) {
-      this.setToken(response.token);
-    }
-    
-    return response;
-  }
-
-  async signInWith2FA(twoFactorToken: string, code: string) {
-    const response = await this.request('/auth/signin/2fa', {
-      method: 'POST',
-      body: JSON.stringify({ twoFactorToken, code }),
     });
     
     if (response.token) {
@@ -214,26 +224,6 @@ class ApiClient {
     });
   }
 
-  async setup2FA() {
-    return this.request('/auth/2fa/setup', {
-      method: 'POST',
-    });
-  }
-
-  async verify2FA(token: string, secret: string) {
-    return this.request('/auth/2fa/verify', {
-      method: 'POST',
-      body: JSON.stringify({ token, secret }),
-    });
-  }
-
-  async disable2FA(code?: string) {
-    return this.request('/auth/2fa/disable', {
-      method: 'POST',
-      body: JSON.stringify({ token: code }),
-    });
-  }
-
   // Company Profile methods
   async getCompanyProfile() {
     try {
@@ -254,10 +244,6 @@ class ApiClient {
   }
 
   // Carbon data methods
-  async getAssessment() {
-    return this.request('/carbon/assessment');
-  }
-
   async getActivities() {
     return this.request('/carbon/activities');
   }
@@ -265,6 +251,21 @@ class ApiClient {
   async addActivity(activity: Record<string, unknown>) {
     return this.request('/carbon/activity', {
       method: 'POST',
+      body: JSON.stringify(activity),
+    });
+  }
+
+  /** Set one month's totals for several activity types (YYYY-MM month) */
+  async logMonth(month: string, entries: { sector: string; subsector: string; activityAmount: number }[]) {
+    return this.request('/carbon/activities/month', {
+      method: 'POST',
+      body: JSON.stringify({ month, entries }),
+    });
+  }
+
+  async updateActivity(id: string, activity: Record<string, unknown>) {
+    return this.request(`/carbon/activity/${id}`, {
+      method: 'PUT',
       body: JSON.stringify(activity),
     });
   }
@@ -277,13 +278,6 @@ class ApiClient {
 
   async getEmissions() {
     return this.request('/carbon/emissions');
-  }
-
-  async updateAssessment(id: string, data: Record<string, unknown>) {
-    return this.request(`/carbon/assessment/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    });
   }
 
   async resetCarbonData() {
@@ -301,22 +295,63 @@ class ApiClient {
     return this.request('/gemini/emission-factors');
   }
 
-  async calculateCarbonScore(data: Record<string, unknown>) {
-    return this.request('/gemini/carbon-calculator', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+  // Action plan
+  async getActions() {
+    return this.request('/actions');
+  }
+
+  async getActionProgress() {
+    return this.request('/actions/progress');
+  }
+
+  async addAction(action: Record<string, unknown>) {
+    return this.request('/actions', { method: 'POST', body: JSON.stringify(action) });
+  }
+
+  async updateActionStatus(id: string, status: string) {
+    return this.request(`/actions/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
+  }
+
+  async deleteAction(id: string) {
+    return this.request(`/actions/${id}`, { method: 'DELETE' });
+  }
+
+  // Reminders
+  async getReminderSettings() {
+    return this.request('/reminders/settings');
+  }
+
+  async updateReminderSettings(monthlyReminders: boolean) {
+    return this.request('/reminders/settings', { method: 'PUT', body: JSON.stringify({ monthlyReminders }) });
+  }
+
+  // Methodology (public reference data; state tailors grid factors and benchmarks)
+  async getMethodology(state?: string | null) {
+    return this.request(`/methodology${state ? `?state=${encodeURIComponent(state)}` : ''}`);
+  }
+
+  // Report
+  async getReport(from: string, to: string) {
+    return this.request(`/carbon/report?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+  }
+
+  /** The report as a CSV file (not JSON, so fetched directly). */
+  async downloadReportCsv(from: string, to: string): Promise<Blob> {
+    const response = await fetchOrExplain(
+      `${this.baseURL}/carbon/report.csv?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+      { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} }
+    );
+    if (!response.ok) throw await errorFromResponse(response);
+    return response.blob();
+  }
+
+  /** Last saved recommendations ({ saved: null } when none have been generated) */
+  async getLatestRecommendations() {
+    return this.request('/gemini/carbon-recommendations/latest');
   }
 
   async getRecommendations(data: Record<string, unknown>) {
     return this.request('/gemini/carbon-recommendations', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-  }
-
-  async getTaxBenefits(data: Record<string, unknown>) {
-    return this.request('/gemini/tax-benefits', {
       method: 'POST',
       body: JSON.stringify(data),
     });

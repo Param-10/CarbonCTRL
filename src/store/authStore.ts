@@ -3,6 +3,7 @@ import { apiClient } from '../lib/api';
 import { useCompanyStore } from './companyStore';
 import { useCarbonStore } from './carbonStore';
 import { useOffsetStore } from './offsetStore';
+import { useActionStore } from './actionStore';
 
 interface User {
   _id: string;
@@ -13,7 +14,6 @@ interface User {
   lastName?: string;
   createdAt: string;
   updatedAt: string;
-  twoFactorEnabled?: boolean;
   googleId?: string;
 }
 
@@ -22,20 +22,14 @@ interface Session {
   user: User;
 }
 
-/** Returned by signIn when the account requires a 2FA code to complete login. */
-interface TwoFactorRequired {
-  twoFactorToken: string;
-}
-
 interface AuthState {
   user: User | null;
   session: Session | null;
   loading: boolean;
   // A saved session could not be checked (server unreachable), as opposed to rejected
   sessionCheckFailed: boolean;
-  signIn: (email: string, password: string) => Promise<TwoFactorRequired | null>;
+  signIn: (email: string, password: string) => Promise<void>;
   signUp: (name: string, email: string, password: string) => Promise<void>;
-  signInWith2FA: (twoFactorToken: string, code: string) => Promise<void>;
   signOut: () => Promise<void>;
   setSession: (session: Session | null) => void;
   initializeAuth: () => Promise<void>;
@@ -45,6 +39,7 @@ const resetUserData = () => {
   useCompanyStore.getState().reset();
   useCarbonStore.getState().reset();
   useOffsetStore.getState().reset();
+  useActionStore.getState().reset();
 };
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -56,26 +51,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   signIn: async (email, password) => {
     try {
       const response = await apiClient.signIn(email, password);
-
-      // 2FA-protected account: the API only returns a short-lived challenge
-      // token, no session. Bubble it up so the UI can ask for the code.
-      if (response.requiresTwoFactor) {
-        return { twoFactorToken: response.twoFactorToken };
-      }
-
-      const user = { ...response.user, id: response.user._id }; // Add id for compatibility
-      const session = { access_token: response.token, user };
-      resetUserData();
-      set({ user, session, sessionCheckFailed: false });
-      return null;
-    } finally {
-      set({ loading: false });
-    }
-  },
-  
-  signInWith2FA: async (twoFactorToken, code) => {
-    try {
-      const response = await apiClient.signInWith2FA(twoFactorToken, code);
       const user = { ...response.user, id: response.user._id }; // Add id for compatibility
       const session = { access_token: response.token, user };
       resetUserData();

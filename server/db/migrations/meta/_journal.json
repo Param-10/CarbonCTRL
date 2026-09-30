@@ -22,6 +22,69 @@
       "when": 1790531361977,
       "tag": "0002_plain_black_tom",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1790618870492,
+      "tag": "0003_add_profile_recommendation_context",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1790620115779,
+      "tag": "0004_add_activity_date",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1790621328659,
+      "tag": "0005_add_employee_count",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1790735978404,
+      "tag": "0006_add_recommendation_sets",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1790737571685,
+      "tag": "0007_remap_activities_to_us_categories",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1790740062849,
+      "tag": "0008_add_action_plan_and_reminders",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1790743864514,
+      "tag": "0009_add_profile_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1790783425870,
+      "tag": "0010_fix_employee_range",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1790792439926,
+      "tag": "0011_remove_two_factor",
+      "breakpoints": true
     }
   ]
 }

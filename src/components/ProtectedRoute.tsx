@@ -71,9 +71,9 @@ const ProtectedRoute = ({ children, requireCompanyProfile = false }: ProtectedRo
       );
     }
     
-    // Only redirect if profile loading is done and no profile exists
+    // New companies set up through the guided onboarding first
     if (!profile || !profile.name) {
-      return <Navigate to="/company-profile" replace />;
+      return <Navigate to="/onboarding" replace />;
     }
   }
 

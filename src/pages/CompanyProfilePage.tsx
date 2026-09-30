@@ -1,13 +1,99 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Building2, Users, MapPin, Phone, Mail, Calendar, BarChart3, AlertTriangle, Save, Edit3 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Building2, Users, MapPin, Phone, Mail, Calendar, BarChart3, AlertTriangle, Save, Edit3, Leaf } from 'lucide-react';
 import { useCarbonStore } from '../store/carbonStore';
 import { useCompanyStore, CompanyProfile } from '../store/companyStore';
+import { useAuthStore } from '../store/authStore';
+import {
+  EMPLOYEE_RANGE_OPTIONS,
+  EXISTING_MEASURE_OPTIONS,
+  INDUSTRY_OPTIONS,
+  FLEET_TYPE_OPTIONS,
+  labelFor,
+  Option,
+  PREMISES_OWNERSHIP_OPTIONS,
+  REDUCTION_BUDGET_OPTIONS,
+  RENEWABLE_SHARE_OPTIONS,
+  REPORTING_OBLIGATION_OPTIONS,
+  STATE_OPTIONS,
+  WORK_MODEL_OPTIONS,
+} from '../lib/profileOptions';
+
+const INPUT_CLASS = 'w-full bg-gray-800/50 border-2 border-emerald-500/30 rounded-xl py-4 px-6 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono shadow-inner';
+const VIEW_CLASS = 'font-mono text-white bg-gray-800/30 p-4 px-6 rounded-xl border border-gray-700/30';
+const NOT_SPECIFIED = 'Not specified';
+
+type ListField = 'existingMeasures' | 'reportingObligations';
+
+const emptyContext = {
+  state: null,
+  reductionBudget: null,
+  reductionTargetPercent: null,
+  reductionTargetYear: null,
+  premisesOwnership: null,
+  renewableElectricityShare: null,
+  fleetSize: null,
+  fleetType: null,
+  workModel: null,
+  siteCount: null,
+  employeeCount: null,
+  existingMeasures: null,
+  reportingObligations: null,
+};
+
+const toNumberOrNull = (value: string) => (value.trim() === '' ? null : Number(value));
+
+const isWholeNumberIn = (value: number | null, min: number, max: number) =>
+  value === null || (Number.isInteger(value) && value >= min && value <= max);
+
+/** Mirrors the server's checks so most mistakes are caught before saving. */
+function validateProfile(data: CompanyProfile): string | null {
+  if (!data.name.trim() || !data.industry || !data.location.trim()) {
+    return 'Company name, industry and location are required.';
+  }
+  if (!isWholeNumberIn(data.reductionTargetPercent, 1, 100)) {
+    return 'Reduction target must be a whole percentage between 1 and 100.';
+  }
+  if (!isWholeNumberIn(data.reductionTargetYear, 2020, 2100)) {
+    return 'Target year must be a year between 2020 and 2100.';
+  }
+  if (data.reductionTargetYear !== null && data.reductionTargetPercent === null) {
+    return 'Add a reduction percentage for your target year.';
+  }
+  if (!isWholeNumberIn(data.fleetSize, 0, 100000)) {
+    return 'Number of company vehicles must be a whole number (0 if none).';
+  }
+  if (!isWholeNumberIn(data.siteCount, 1, 10000)) {
+    return 'Number of sites must be a whole number of at least 1.';
+  }
+  if (!isWholeNumberIn(data.employeeCount, 1, 1000000)) {
+    return 'Exact headcount must be a whole number of at least 1.';
+  }
+  return null;
+}
+
+function describeTarget(data: CompanyProfile) {
+  if (data.reductionTargetPercent === null) return NOT_SPECIFIED;
+  return data.reductionTargetYear
+    ? `${data.reductionTargetPercent}% by ${data.reductionTargetYear}`
+    : `${data.reductionTargetPercent}%`;
+}
+
+function describeFleet(data: CompanyProfile) {
+  if (data.fleetSize === null) return NOT_SPECIFIED;
+  if (data.fleetSize === 0) return 'None';
+  const type = labelFor(FLEET_TYPE_OPTIONS, data.fleetType);
+  return type ? `${data.fleetSize} (${type})` : String(data.fleetSize);
+}
 
 const CompanyProfilePage = () => {
+  const navigate = useNavigate();
   const [isEditing, setIsEditing] = useState(false);
-  const { carbonScore } = useCarbonStore();
-  const { profile, loading, error, fetchProfile, updateProfile } = useCompanyStore();
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const { carbonScore, loadSavedData } = useCarbonStore();
+  const { user } = useAuthStore();
+  const { profile, loading, loaded, error, fetchProfile, updateProfile } = useCompanyStore();
   const [companyData, setCompanyData] = useState<CompanyProfile | null>(null);
 
   useEffect(() => {
@@ -16,8 +102,17 @@ const CompanyProfilePage = () => {
 
   useEffect(() => {
     if (profile) {
-      setCompanyData(profile);
-    } else {
+      // Profiles saved before the context fields existed come back without
+      // them, and blank optional text fields come back as null
+      setCompanyData({
+        ...emptyContext,
+        ...profile,
+        phone: profile.phone ?? '',
+        email: profile.email ?? '',
+        founded: profile.founded ?? '',
+        description: profile.description ?? ''
+      });
+    } else if (loaded) {
       // Empty company profile for new users - let them fill it out
       setCompanyData({
         name: "",
@@ -27,18 +122,55 @@ const CompanyProfilePage = () => {
         email: "",
         founded: "",
         industry: "",
-        description: ""
+        description: "",
+        ...emptyContext
       });
-      // Start in editing mode if no profile exists
+      // Start in editing mode only once the lookup confirmed there is no
+      // profile, not while it is still loading
       setIsEditing(true);
     }
-  }, [profile]);
+  }, [profile, loaded]);
 
   const handleSave = async () => {
     if (!companyData) return;
-    
-    await updateProfile(companyData);
-    setIsEditing(false);
+
+    const validationError = validateProfile(companyData);
+    if (validationError) {
+      setSaveError(validationError);
+      return;
+    }
+
+    setSaveError(null);
+    const isFirstSetup = !profile;
+    try {
+      await updateProfile(companyData);
+      setIsEditing(false);
+      // State, industry and headcount change the grade, so reload the score
+      if (user) loadSavedData(user.id);
+      // New users go straight on to recording their first activity
+      if (isFirstSetup) navigate('/dashboard');
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Could not save your profile. Please try again.');
+    }
+  };
+
+  const toggleListValue = (field: ListField, value: string) => {
+    if (!companyData) return;
+    const current = companyData[field] ?? [];
+    const next = current.includes(value)
+      ? current.filter((item) => item !== value)
+      : [...current, value];
+    setCompanyData({ ...companyData, [field]: next });
+  };
+
+  const setFleetSize = (value: string) => {
+    if (!companyData) return;
+    const fleetSize = toNumberOrNull(value);
+    setCompanyData({
+      ...companyData,
+      fleetSize,
+      fleetType: fleetSize === 0 ? null : companyData.fleetType
+    });
   };
 
   if (loading) {
@@ -74,7 +206,7 @@ const CompanyProfilePage = () => {
 
   return (
     <div className="fixed inset-0 md:left-64 overflow-y-auto bg-gradient-to-b from-gray-800 via-emerald-900 to-gray-800">
-      <div className="px-8 py-8 space-y-10">
+      <div className="px-4 pt-20 pb-8 sm:px-8 md:pt-8 space-y-10">
       {/* Welcome Message for New Users */}
       {!profile && (
         <motion.div
@@ -104,7 +236,7 @@ const CompanyProfilePage = () => {
       )}
 
       <div>
-        <h1 className="font-space text-4xl font-bold text-white mb-3">Company Profile</h1>
+        <h1 className="font-space text-3xl sm:text-4xl font-bold text-white mb-3">Company Profile</h1>
         <p className="font-mono text-emerald-100/80">
           {!profile 
             ? "Set up your organization's details to begin tracking your carbon impact"
@@ -118,9 +250,9 @@ const CompanyProfilePage = () => {
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="feature-card lg:col-span-3 p-8 border border-emerald-500/20 shadow-xl rounded-2xl bg-gradient-to-br from-gray-800/50 to-gray-900/50 backdrop-blur-sm"
+          className="feature-card lg:col-span-3 p-5 sm:p-8 border border-emerald-500/20 shadow-xl rounded-2xl bg-gradient-to-br from-gray-800/50 to-gray-900/50 backdrop-blur-sm"
         >
-          <div className="flex items-center justify-between mb-8">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
             <div className="flex items-center gap-4">
               <div className="bg-emerald-500/20 p-4 rounded-xl border border-emerald-500/30">
                 <Building2 className="w-6 h-6 text-emerald-400" />
@@ -152,12 +284,20 @@ const CompanyProfilePage = () => {
             </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          {saveError && (
+            <div role="alert" className="mb-8 flex items-start gap-3 p-4 rounded-xl border border-red-500/30 bg-red-500/10">
+              <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+              <p className="font-mono text-sm text-red-200">{saveError}</p>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <div className="space-y-8">
               <div>
-                <label className="block font-mono text-sm text-emerald-100/70 mb-3">Company Name</label>
+                <label htmlFor="companyName" className="block font-mono text-sm text-emerald-100/70 mb-3">Company Name</label>
                 {isEditing ? (
                   <input
+                    id="companyName"
                     type="text"
                     value={companyData.name}
                     onChange={(e) => setCompanyData({ ...companyData, name: e.target.value })}
@@ -172,59 +312,93 @@ const CompanyProfilePage = () => {
               </div>
 
               <div>
-                <label className="block font-mono text-sm text-emerald-100/70 mb-3">
-                  <div className="flex items-center gap-2">
-                    <Users className="w-4 h-4" />
+                <label htmlFor="companyEmployees" className="block font-mono text-sm text-emerald-100/70 mb-3">
+                  <span className="flex items-center gap-2">
+                    <Users className="w-4 h-4" aria-hidden="true" />
                     Employees
-                  </div>
+                  </span>
                 </label>
                 {isEditing ? (
                   <select
+                    id="companyEmployees"
                     value={companyData.employees}
                     onChange={(e) => setCompanyData({ ...companyData, employees: e.target.value })}
                     className="w-full bg-gray-800/50 border-2 border-emerald-500/30 rounded-xl py-4 px-6 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono shadow-inner"
                   >
-                    <option value="1-10">1-10</option>
-                    <option value="11-50">11-50</option>
-                    <option value="51-200">51-200</option>
-                    <option value="250-500">250-500</option>
-                    <option value="500+">500+</option>
+                    {EMPLOYEE_RANGE_OPTIONS.map((range) => (
+                      <option key={range} value={range}>{range}</option>
+                    ))}
                   </select>
                 ) : (
-                  <p className="font-mono text-white bg-gray-800/30 p-4 px-6 rounded-xl border border-gray-700/30">{companyData.employees}</p>
+                  <p className="font-mono text-white bg-gray-800/30 p-4 px-6 rounded-xl border border-gray-700/30">
+                    {companyData.employees}
+                    {companyData.employeeCount !== null && ` · exactly ${companyData.employeeCount}`}
+                  </p>
+                )}
+                {isEditing && (
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    aria-label="Exact headcount (optional)"
+                    placeholder="Exact headcount (optional, improves your grade)"
+                    value={companyData.employeeCount ?? ''}
+                    onChange={(e) => setCompanyData({ ...companyData, employeeCount: toNumberOrNull(e.target.value) })}
+                    className={`${INPUT_CLASS} mt-3`}
+                  />
                 )}
               </div>
 
               <div>
-                <label className="block font-mono text-sm text-emerald-100/70 mb-3">
-                  <div className="flex items-center gap-2">
-                    <MapPin className="w-4 h-4" />
+                <label htmlFor="companyLocation" className="block font-mono text-sm text-emerald-100/70 mb-3">
+                  <span className="flex items-center gap-2">
+                    <MapPin className="w-4 h-4" aria-hidden="true" />
                     Location
-                  </div>
+                  </span>
                 </label>
                 {isEditing ? (
-                  <input
-                    type="text"
-                    value={companyData.location}
-                    onChange={(e) => setCompanyData({ ...companyData, location: e.target.value })}
-                    className="w-full bg-gray-800/50 border-2 border-emerald-500/30 rounded-xl py-4 px-6 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono shadow-inner"
-                  />
+                  <>
+                    <input
+                      id="companyLocation"
+                      type="text"
+                      placeholder="City"
+                      value={companyData.location}
+                      onChange={(e) => setCompanyData({ ...companyData, location: e.target.value })}
+                      className="w-full bg-gray-800/50 border-2 border-emerald-500/30 rounded-xl py-4 px-6 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono shadow-inner"
+                    />
+                    <select
+                      aria-label="State"
+                      value={companyData.state ?? ''}
+                      onChange={(e) => setCompanyData({ ...companyData, state: e.target.value || null })}
+                      className={`${INPUT_CLASS} mt-3`}
+                    >
+                      <option value="">State: not specified (uses the US average grid)</option>
+                      {STATE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                    <p className="font-mono text-xs text-emerald-100/60 mt-2">Your state sets the electricity emission factor and the benchmark you are graded against.</p>
+                  </>
                 ) : (
-                  <p className="font-mono text-white bg-gray-800/30 p-4 px-6 rounded-xl border border-gray-700/30">{companyData.location}</p>
+                  <p className="font-mono text-white bg-gray-800/30 p-4 px-6 rounded-xl border border-gray-700/30">
+                    {companyData.location}
+                    {companyData.state && ` · ${labelFor(STATE_OPTIONS, companyData.state)}`}
+                  </p>
                 )}
               </div>
             </div>
 
             <div className="space-y-8">
               <div>
-                <label className="block font-mono text-sm text-emerald-100/70 mb-3">
-                  <div className="flex items-center gap-2">
-                    <Phone className="w-4 h-4" />
+                <label htmlFor="companyPhone" className="block font-mono text-sm text-emerald-100/70 mb-3">
+                  <span className="flex items-center gap-2">
+                    <Phone className="w-4 h-4" aria-hidden="true" />
                     Phone
-                  </div>
+                  </span>
                 </label>
                 {isEditing ? (
                   <input
+                    id="companyPhone"
                     type="tel"
                     value={companyData.phone}
                     onChange={(e) => setCompanyData({ ...companyData, phone: e.target.value })}
@@ -236,14 +410,15 @@ const CompanyProfilePage = () => {
               </div>
 
               <div>
-                <label className="block font-mono text-sm text-emerald-100/70 mb-3">
-                  <div className="flex items-center gap-2">
-                    <Mail className="w-4 h-4" />
+                <label htmlFor="companyEmail" className="block font-mono text-sm text-emerald-100/70 mb-3">
+                  <span className="flex items-center gap-2">
+                    <Mail className="w-4 h-4" aria-hidden="true" />
                     Email
-                  </div>
+                  </span>
                 </label>
                 {isEditing ? (
                   <input
+                    id="companyEmail"
                     type="email"
                     value={companyData.email}
                     onChange={(e) => setCompanyData({ ...companyData, email: e.target.value })}
@@ -255,14 +430,15 @@ const CompanyProfilePage = () => {
               </div>
 
               <div>
-                <label className="block font-mono text-sm text-emerald-100/70 mb-3">
-                  <div className="flex items-center gap-2">
-                    <Calendar className="w-4 h-4" />
+                <label htmlFor="companyFounded" className="block font-mono text-sm text-emerald-100/70 mb-3">
+                  <span className="flex items-center gap-2">
+                    <Calendar className="w-4 h-4" aria-hidden="true" />
                     Founded
-                  </div>
+                  </span>
                 </label>
                 {isEditing ? (
                   <input
+                    id="companyFounded"
                     type="text"
                     value={companyData.founded}
                     onChange={(e) => setCompanyData({ ...companyData, founded: e.target.value })}
@@ -274,10 +450,11 @@ const CompanyProfilePage = () => {
               </div>
             </div>
 
-            <div className="md:col-span-2 space-y-3">
-              <label className="block font-mono text-sm text-emerald-100/70 mb-3">Company Description</label>
+            <div className="lg:col-span-2 space-y-3">
+              <label htmlFor="companyDescription" className="block font-mono text-sm text-emerald-100/70 mb-3">Company Description</label>
               {isEditing ? (
                 <textarea
+                  id="companyDescription"
                   value={companyData.description}
                   onChange={(e) => setCompanyData({ ...companyData, description: e.target.value })}
                   className="w-full bg-gray-800/50 border-2 border-emerald-500/30 rounded-xl py-4 px-6 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono shadow-inner h-40"
@@ -287,31 +464,163 @@ const CompanyProfilePage = () => {
               )}
             </div>
 
-            <div className="md:col-span-2 space-y-3 mb-4">
-              <label className="block font-mono text-sm text-emerald-100/70 mb-3">Industry</label>
+            <div className="lg:col-span-2 space-y-3 mb-4">
+              <label htmlFor="companyIndustry" className="block font-mono text-sm text-emerald-100/70 mb-3">Industry</label>
               {isEditing ? (
                 <select
+                  id="companyIndustry"
                   value={companyData.industry}
                   onChange={(e) => setCompanyData({ ...companyData, industry: e.target.value })}
                   className="w-full bg-gray-800/50 border-2 border-emerald-500/30 rounded-xl py-4 px-6 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono shadow-inner"
                 >
-                  <option value="Technology">Technology</option>
-                  <option value="Manufacturing">Manufacturing</option>
-                  <option value="Energy">Energy</option>
-                  <option value="Agriculture">Agriculture</option>
-                  <option value="Transportation">Transportation</option>
-                  <option value="Financial Services">Financial Services</option>
-                  <option value="Healthcare">Healthcare</option>
-                  <option value="Retail">Retail</option>
-                  <option value="Hospitality">Hospitality</option>
-                  <option value="Education">Education</option>
-                  <option value="Construction">Construction</option>
+                  <option value="" disabled>Select an industry</option>
+                  {INDUSTRY_OPTIONS.map((industry) => (
+                    <option key={industry} value={industry}>{industry}</option>
+                  ))}
                 </select>
               ) : (
                 <p className="font-mono text-white bg-gray-800/30 p-4 px-6 rounded-xl border border-gray-700/30">{companyData.industry}</p>
               )}
             </div>
-            
+
+            {/* Sustainability context used to tailor recommendations */}
+            <div className="lg:col-span-2 pt-8 border-t border-emerald-500/20">
+              <div className="flex items-center gap-3 mb-2">
+                <Leaf className="w-5 h-5 text-emerald-400" />
+                <h3 className="font-space text-lg font-semibold text-white">Sustainability Context</h3>
+              </div>
+              <p className="font-mono text-sm text-emerald-100/60 mb-8">
+                Optional. The more you fill in, the better your AI recommendations fit what your company can actually do.
+              </p>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <ContextSelect
+                  label="Budget for reduction measures"
+                  value={companyData.reductionBudget}
+                  options={REDUCTION_BUDGET_OPTIONS}
+                  isEditing={isEditing}
+                  onChange={(value) => setCompanyData({ ...companyData, reductionBudget: value })}
+                />
+
+                <div>
+                  <label className="block font-mono text-sm text-emerald-100/70 mb-3">Reduction target</label>
+                  {isEditing ? (
+                    <div className="grid grid-cols-2 gap-3">
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        step={1}
+                        aria-label="Reduction target percentage"
+                        placeholder="% e.g. 30"
+                        value={companyData.reductionTargetPercent ?? ''}
+                        onChange={(e) => setCompanyData({ ...companyData, reductionTargetPercent: toNumberOrNull(e.target.value) })}
+                        className={INPUT_CLASS}
+                      />
+                      <input
+                        type="number"
+                        min={2020}
+                        max={2100}
+                        step={1}
+                        aria-label="Reduction target year"
+                        placeholder="Year e.g. 2030"
+                        value={companyData.reductionTargetYear ?? ''}
+                        onChange={(e) => setCompanyData({ ...companyData, reductionTargetYear: toNumberOrNull(e.target.value) })}
+                        className={INPUT_CLASS}
+                      />
+                    </div>
+                  ) : (
+                    <p className={VIEW_CLASS}>{describeTarget(companyData)}</p>
+                  )}
+                </div>
+
+                <ContextSelect
+                  label="Premises"
+                  value={companyData.premisesOwnership}
+                  options={PREMISES_OWNERSHIP_OPTIONS}
+                  isEditing={isEditing}
+                  onChange={(value) => setCompanyData({ ...companyData, premisesOwnership: value })}
+                />
+
+                <div>
+                  <label htmlFor="siteCount" className="block font-mono text-sm text-emerald-100/70 mb-3">Number of sites</label>
+                  {isEditing ? (
+                    <input
+                      id="siteCount"
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={companyData.siteCount ?? ''}
+                      onChange={(e) => setCompanyData({ ...companyData, siteCount: toNumberOrNull(e.target.value) })}
+                      className={INPUT_CLASS}
+                    />
+                  ) : (
+                    <p className={VIEW_CLASS}>{companyData.siteCount ?? NOT_SPECIFIED}</p>
+                  )}
+                </div>
+
+                <ContextSelect
+                  label="Work model"
+                  value={companyData.workModel}
+                  options={WORK_MODEL_OPTIONS}
+                  isEditing={isEditing}
+                  onChange={(value) => setCompanyData({ ...companyData, workModel: value })}
+                />
+
+                <ContextSelect
+                  label="Electricity from renewable sources"
+                  value={companyData.renewableElectricityShare}
+                  options={RENEWABLE_SHARE_OPTIONS}
+                  isEditing={isEditing}
+                  onChange={(value) => setCompanyData({ ...companyData, renewableElectricityShare: value })}
+                />
+
+                <div>
+                  <label htmlFor="fleetSize" className="block font-mono text-sm text-emerald-100/70 mb-3">Company vehicles</label>
+                  {isEditing ? (
+                    <input
+                      id="fleetSize"
+                      type="number"
+                      min={0}
+                      step={1}
+                      placeholder="0 if none"
+                      value={companyData.fleetSize ?? ''}
+                      onChange={(e) => setFleetSize(e.target.value)}
+                      className={INPUT_CLASS}
+                    />
+                  ) : (
+                    <p className={VIEW_CLASS}>{describeFleet(companyData)}</p>
+                  )}
+                </div>
+
+                {isEditing && companyData.fleetSize !== null && companyData.fleetSize > 0 && (
+                  <ContextSelect
+                    label="Vehicle type"
+                    value={companyData.fleetType}
+                    options={FLEET_TYPE_OPTIONS}
+                    isEditing={isEditing}
+                    onChange={(value) => setCompanyData({ ...companyData, fleetType: value })}
+                  />
+                )}
+
+                <ContextChecklist
+                  label="Measures already in place"
+                  values={companyData.existingMeasures}
+                  options={EXISTING_MEASURE_OPTIONS}
+                  isEditing={isEditing}
+                  onToggle={(value) => toggleListValue('existingMeasures', value)}
+                />
+
+                <ContextChecklist
+                  label="Reporting obligations"
+                  values={companyData.reportingObligations}
+                  options={REPORTING_OBLIGATION_OPTIONS}
+                  isEditing={isEditing}
+                  onToggle={(value) => toggleListValue('reportingObligations', value)}
+                />
+              </div>
+            </div>
+
             {/* Motivational message for new users */}
             {!profile && isEditing && (
               <motion.div
@@ -374,6 +683,90 @@ const CompanyProfilePage = () => {
       </div>
       </div>
     </div>
+  );
+};
+
+interface ContextSelectProps {
+  label: string;
+  value: string | null;
+  options: Option[];
+  isEditing: boolean;
+  onChange: (value: string | null) => void;
+}
+
+const ContextSelect = ({ label, value, options, isEditing, onChange }: ContextSelectProps) => (
+  <div>
+    <label className="block font-mono text-sm text-emerald-100/70 mb-3">
+      {label}
+      {isEditing && (
+        <select
+          value={value ?? ''}
+          onChange={(e) => onChange(e.target.value === '' ? null : e.target.value)}
+          className={`${INPUT_CLASS} mt-3`}
+        >
+          <option value="">{NOT_SPECIFIED}</option>
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+      )}
+    </label>
+    {!isEditing && <p className={VIEW_CLASS}>{labelFor(options, value) ?? NOT_SPECIFIED}</p>}
+  </div>
+);
+
+interface ContextChecklistProps {
+  label: string;
+  values: string[] | null;
+  options: Option[];
+  isEditing: boolean;
+  onToggle: (value: string) => void;
+}
+
+const ContextChecklist = ({ label, values, options, isEditing, onToggle }: ContextChecklistProps) => {
+  const selected = values ?? [];
+
+  if (!isEditing) {
+    const text = values === null
+      ? NOT_SPECIFIED
+      : values.length === 0
+        ? 'None'
+        : values.map((value) => labelFor(options, value) ?? value).join(', ');
+    return (
+      <div className="lg:col-span-2">
+        <p className="block font-mono text-sm text-emerald-100/70 mb-3">{label}</p>
+        <p className={VIEW_CLASS}>{text}</p>
+      </div>
+    );
+  }
+
+  return (
+    <fieldset className="lg:col-span-2">
+      <legend className="block font-mono text-sm text-emerald-100/70 mb-3">{label}</legend>
+      <div className="flex flex-wrap gap-3">
+        {options.map((option) => {
+          const isChecked = selected.includes(option.value);
+          return (
+            <label
+              key={option.value}
+              className={`cursor-pointer select-none px-4 py-2 rounded-lg border font-mono text-sm transition-colors ${
+                isChecked
+                  ? 'bg-emerald-500/20 border-emerald-500 text-emerald-200'
+                  : 'bg-gray-800/50 border-gray-600 text-gray-300 hover:border-emerald-500/50'
+              }`}
+            >
+              <input
+                type="checkbox"
+                className="sr-only"
+                checked={isChecked}
+                onChange={() => onToggle(option.value)}
+              />
+              {option.label}
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
   );
 };
 

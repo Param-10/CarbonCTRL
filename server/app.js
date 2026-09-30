@@ -7,6 +7,9 @@ import authRoutes from './routes/auth.js';
 import carbonRoutes from './routes/carbon.js';
 import companyRoutes from './routes/company.js';
 import geminiRoutes from './routes/gemini.js';
+import actionRoutes from './routes/actions.js';
+import reminderRoutes from './routes/reminders.js';
+import methodologyRoutes from './routes/methodology.js';
 import { pingDatabase } from './db/index.js';
 
 const app = express();
@@ -43,15 +46,20 @@ app.use(cors({
     return callback(new Error(`CORS blocked for origin: ${origin}`));
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// Rate limiting
+// General rate limit against abuse. One page load makes several requests, so
+// this must leave room for normal use; sign-in and password reset have their
+// own stricter limits (routes/auth.js). JSON message so the app can show it.
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  skip: () => process.env.NODE_ENV === 'test'
+  max: 1000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'test',
+  message: { error: 'Too many requests right now. Please wait a minute and try again.' }
 });
 app.use(limiter);
 
@@ -64,6 +72,9 @@ app.use('/api/auth', authRoutes);
 app.use('/api/carbon', carbonRoutes);
 app.use('/api/company', companyRoutes);
 app.use('/api/gemini', geminiRoutes);
+app.use('/api/actions', actionRoutes);
+app.use('/api/reminders', reminderRoutes);
+app.use('/api/methodology', methodologyRoutes);
 
 // Health check endpoint (SQLite is local, so this reflects DB availability)
 app.get('/health', (req, res) => {

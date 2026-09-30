@@ -1,13 +1,54 @@
 import { create } from 'zustand';
 import { apiClient } from '../lib/api';
 
-interface CarbonActivity {
+export interface CarbonActivity {
   id?: string;
   _id?: string;
   sector: string;
   subsector: string;
   activityAmount: number;
   activityUnit: string;
+  /** YYYY-MM-DD; defaults to today on the server when omitted */
+  activityDate?: string | null;
+  createdAt?: string;
+}
+
+/** One activity type's total for a month */
+export interface MonthEntry {
+  sector: string;
+  subsector: string;
+  activityAmount: number;
+}
+
+/** The fields a user enters for an activity */
+export type ActivityInput = Pick<CarbonActivity, 'sector' | 'subsector' | 'activityAmount' | 'activityUnit' | 'activityDate'>;
+
+export interface MonthlyEmissions {
+  month: string; // YYYY-MM
+  total: number;
+  breakdown: Record<string, number>;
+}
+
+/** Annualized emissions per employee compared with the industry's typical figure */
+export interface EmissionsIntensity {
+  annualized_emissions: number;
+  months_covered: number | null;
+  employees: number;
+  employees_estimated: boolean;
+  /** What is graded: building energy (building-based industries) or the whole footprint */
+  basis: 'building_energy' | 'total_indicative';
+  /** The graded emissions per employee per year */
+  per_employee: number;
+  /** All emissions per employee per year, whatever the basis */
+  total_per_employee: number;
+  industry: string | null;
+  industry_benchmark: number;
+  benchmark_label: string;
+  benchmark_source: string;
+  benchmark_is_default: boolean;
+  state: string | null;
+  ratio: number;
+  provisional: boolean;
 }
 
 interface CarbonScore {
@@ -16,6 +57,9 @@ interface CarbonScore {
   emissions_breakdown: Record<string, number>;
   improvement_potential: number;
   benchmark_comparison: string;
+  emissions_by_month?: MonthlyEmissions[];
+  period?: { start: string; end: string } | null;
+  intensity?: EmissionsIntensity | null;
 }
 
 interface CarbonState {
@@ -23,10 +67,14 @@ interface CarbonState {
   carbonScore: CarbonScore | null;
   loading: boolean;
   initialized: boolean;
-  addActivity: (activity: Omit<CarbonActivity, 'id' | '_id'>, userId: string) => Promise<void>;
-  removeActivity: (id: string, userId: string) => Promise<void>;
-  calculateScore: (userId: string) => Promise<void>;
-  resetScore: (userId: string) => Promise<void>;
+  /** Changes below throw on failure so the page can show the error. */
+  addActivity: (activity: ActivityInput) => Promise<void>;
+  updateActivity: (id: string, activity: ActivityInput) => Promise<void>;
+  /** Set one month's total for each given activity type (see "Log a month"). */
+  logMonth: (month: string, entries: MonthEntry[]) => Promise<void>;
+  /** Deletes an activity and returns it, so the page can offer undo. */
+  removeActivity: (id: string) => Promise<CarbonActivity | null>;
+  deleteAllData: () => Promise<void>;
   loadSavedData: (userId: string) => Promise<void>;
   reset: () => void;
 }
@@ -38,207 +86,84 @@ const initialState = {
   initialized: false,
 };
 
-export const useCarbonStore = create<CarbonState>((set, get) => ({
-  ...initialState,
+const activityId = (activity: CarbonActivity) => activity.id ?? activity._id ?? '';
 
-  // Clears the signed-in user's carbon data, e.g. on sign-out
-  reset: () => set(initialState),
+const toActivityInput = ({ sector, subsector, activityAmount, activityUnit, activityDate }: ActivityInput): ActivityInput => ({
+  sector,
+  subsector,
+  activityAmount,
+  activityUnit,
+  activityDate,
+});
 
-  addActivity: async (activity, userId) => {
-    if (!userId) {
-      console.error('Cannot add activity: No user ID provided');
-      return;
-    }
+export const useCarbonStore = create<CarbonState>((set, get) => {
+  // Several components load on mount; they share one request instead of each sending their own
+  let loadRequest: { userId: string; promise: Promise<void> } | null = null;
 
-    try {
-      set({ loading: true });
-      
-      const newActivity = await apiClient.addActivity({
-        sector: activity.sector,
-        subsector: activity.subsector,
-        activityAmount: activity.activityAmount,
-        activityUnit: activity.activityUnit
-      });
-      
-      console.log('Successfully added activity');
-      
-      // Update local state
-      set(state => ({
-        activities: [...state.activities, { ...newActivity, id: newActivity._id }]
-      }));
-    } catch (error) {
-      console.error('Error in addActivity:', error);
-    } finally {
-      set({ loading: false });
-    }
-  },
+  /**
+   * Reload activities and the score from the server. The server recalculates
+   * the score from the stored activities on every request, so after any
+   * change this is the single source of truth.
+   */
+  const refresh = async () => {
+    const savedData = await apiClient.getSavedData();
+    const activities: CarbonActivity[] = (savedData.activities ?? []).map((activity: CarbonActivity) => ({
+      ...activity,
+      id: activity._id,
+    }));
+    set({ activities, carbonScore: savedData.score ?? null, initialized: true });
+  };
 
-  removeActivity: async (id, userId) => {
-    if (!userId) {
-      console.error('Cannot remove activity: No user ID provided');
-      return;
-    }
+  return {
+    ...initialState,
 
-    try {
-      set({ loading: true });
-      
+    // Clears the signed-in user's carbon data, e.g. on sign-out
+    reset: () => set(initialState),
+
+    addActivity: async (activity) => {
+      await apiClient.addActivity(toActivityInput(activity));
+      await refresh();
+    },
+
+    updateActivity: async (id, activity) => {
+      await apiClient.updateActivity(id, toActivityInput(activity));
+      await refresh();
+    },
+
+    logMonth: async (month, entries) => {
+      await apiClient.logMonth(month, entries);
+      await refresh();
+    },
+
+    removeActivity: async (id) => {
+      const removed = get().activities.find((activity) => activityId(activity) === id) ?? null;
       await apiClient.deleteActivity(id);
-      
-      console.log('Successfully removed activity');
-      
-      // Update local state
-      set(state => ({
-        activities: state.activities.filter(activity => activity.id !== id && activity._id !== id)
-      }));
-      
-      // Recalculate score after removing activity
-      const { calculateScore } = get();
-      await calculateScore(userId);
-    } catch (error) {
-      console.error('Error in removeActivity:', error);
-    } finally {
-      set({ loading: false });
-    }
-  },
+      await refresh();
+      return removed;
+    },
 
-  calculateScore: async (userId) => {
-    const { activities } = get();
-    
-    if (!userId) {
-      console.error('Cannot calculate score: No user ID provided');
-      return;
-    }
-    
-    if (activities.length === 0) {
-      console.warn('No activities to calculate score for');
-      return;
-    }
-
-    set({ loading: true });
-
-    try {
-      console.log('Calculating carbon score for user:', userId);
-      
-      const result = await apiClient.calculateCarbonScore({
-        company_name: "User Company",
-        activities: activities.map(({ sector, subsector, activityAmount, activityUnit }) => ({
-          sector,
-          subsector,
-          activity_amount: activityAmount,
-          activity_unit: activityUnit
-        }))
-      });
-
-      console.log('Received carbon score result:', result);
-      
-      set({ carbonScore: result });
-      
-      // Update assessment with new score
-      const assessment = await apiClient.getAssessment();
-      if (assessment) {
-        await apiClient.updateAssessment(assessment._id, {
-          totalEmissions: result.total_emissions_tons_co2e,
-          grade: result.carbon_rating,
-          emissionsBreakdown: result.emissions_breakdown
-        });
-        
-        console.log('Updated assessment with new score');
-      }
-    } catch (error) {
-      console.error('Error calculating carbon score:', error);
-      throw error;
-    } finally {
-      set({ loading: false });
-    }
-  },
-
-  resetScore: async (userId) => {
-    if (!userId) {
-      console.error('Cannot reset score: No user ID provided');
-      return;
-    }
-
-    try {
-      set({ loading: true });
-      console.log('Resetting carbon data for user:', userId);
-      
+    deleteAllData: async () => {
       await apiClient.resetCarbonData();
-      
-      console.log('Successfully reset all carbon data');
-      
-      // Reset local state
-      set({
-        activities: [],
-        carbonScore: null,
-        initialized: false
-      });
-    } catch (error) {
-      console.error('Error in resetScore:', error);
-    } finally {
-      set({ loading: false });
-    }
-  },
-  
-  loadSavedData: async (userId: string) => {
-    if (!userId) {
-      console.error('Cannot load saved data: No user ID provided');
-      return;
-    }
-    
-    try {
-      set({ loading: true });
-      console.log('Loading saved carbon data for user:', userId);
-      
-      const savedData = await apiClient.getSavedData();
-      
-      if (!savedData.assessment) {
-        console.log('No previous assessment found for user');
-        set({ initialized: true, loading: false });
+      set({ activities: [], carbonScore: null, initialized: true });
+    },
+
+    loadSavedData: async (userId: string) => {
+      if (!userId) {
+        console.error('Cannot load saved data: No user ID provided');
         return;
       }
-      
-      console.log('Found assessment:', savedData.assessment);
-      
-      // Process activities to include id field for compatibility
-      const activities = savedData.activities.map((activity: unknown) => {
-        const act = activity as Record<string, unknown>;
-        return {
-          ...act,
-          id: act._id,
-          activityAmount: act.activityAmount
-        };
-      });
-      
-      console.log('Loaded activities:', activities);
-      
-      // Build carbon score from assessment and emissions
-      const emissionsBreakdown: Record<string, number> = {};
-      savedData.emissions.forEach((emission: unknown) => {
-        const em = emission as Record<string, unknown>;
-        emissionsBreakdown[em.type as string] = em.amount as number;
-      });
-      
-      const carbonScore: CarbonScore = {
-        total_emissions_tons_co2e: savedData.assessment.totalEmissions,
-        carbon_rating: savedData.assessment.grade,
-        emissions_breakdown: emissionsBreakdown,
-        improvement_potential: Math.max(0, savedData.assessment.totalEmissions * 0.3),
-        benchmark_comparison: savedData.assessment.totalEmissions > 50 ? 'Above average' : 'Below average'
-      };
-      
-      // Update state with loaded data
-      set({
-        activities,
-        carbonScore,
-        initialized: true,
-        loading: false
-      });
-      
-      console.log('Successfully loaded saved carbon data');
-    } catch (error) {
-      console.error('Error loading carbon data:', error);
-    } finally {
-      set({ loading: false });
-    }
-  }
-}));
+
+      if (loadRequest?.userId === userId) return loadRequest.promise;
+
+      set({ loading: true });
+      const promise = refresh()
+        .catch((error) => console.error('Error loading carbon data:', error))
+        .finally(() => {
+          set({ loading: false });
+          if (loadRequest?.promise === promise) loadRequest = null;
+        });
+      loadRequest = { userId, promise };
+      return promise;
+    },
+  };
+});

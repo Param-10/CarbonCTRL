@@ -6,12 +6,6 @@
 .env
 .env.local
 .env.development.local
-/.venv-ml
 
 # Local SQLite database (auto-created; never commit)
 /server/data/
-
-# Python cache & bytecode
-__pycache__/
-*.py[cod]
-*$py.class

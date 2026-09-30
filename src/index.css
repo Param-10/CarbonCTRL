@@ -199,3 +199,21 @@
 .nav-link:hover::after {
   width: 100%;
 }
+
+/* Printed reports: black on white, no dark theme, no animations */
+@media print {
+  .report,
+  .report * {
+    color: #000 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    animation: none !important;
+  }
+  .report .feature-card,
+  .report table,
+  .report tr {
+    border-color: #ccc !important;
+    break-inside: avoid;
+  }
+}

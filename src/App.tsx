@@ -14,6 +14,11 @@ import SettingsPage from './pages/SettingsPage';
 import CompanyProfilePage from './pages/CompanyProfilePage';
 import RecommendationsPage from './pages/RecommendationsPage';
 import OffsetProjectsPage from './pages/OffsetProjectsPage';
+import OnboardingPage from './pages/OnboardingPage';
+import ActionPlanPage from './pages/ActionPlanPage';
+import ReportPage from './pages/ReportPage';
+import MethodologyPage from './pages/MethodologyPage';
+import HowItWorksPage from './pages/HowItWorksPage';
 
 function App() {
   const { user, loading, initializeAuth } = useAuthStore();
@@ -70,6 +75,14 @@ function App() {
           <Route path="/" element={<LandingPage />} />
           <Route path="/auth" element={<AuthPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route
+            path="/onboarding"
+            element={
+              <ProtectedRoute>
+                <OnboardingPage />
+              </ProtectedRoute>
+            }
+          />
           <Route element={<Layout />}>
             <Route 
               path="/dashboard" 
@@ -102,6 +115,38 @@ function App() {
                   <RecommendationsPage />
                 </ProtectedRoute>
               } 
+            />
+            <Route
+              path="/action-plan"
+              element={
+                <ProtectedRoute requireCompanyProfile={true}>
+                  <ActionPlanPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/report"
+              element={
+                <ProtectedRoute requireCompanyProfile={true}>
+                  <ReportPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/how-it-works"
+              element={
+                <ProtectedRoute>
+                  <HowItWorksPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/methodology"
+              element={
+                <ProtectedRoute>
+                  <MethodologyPage />
+                </ProtectedRoute>
+              }
             />
             <Route 
               path="/offset-projects" 

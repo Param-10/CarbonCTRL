@@ -1,8 +1,6 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import speakeasy from 'speakeasy';
-import QRCode from 'qrcode';
 import crypto from 'crypto';
 import rateLimit from 'express-rate-limit';
 import { OAuth2Client } from 'google-auth-library';
@@ -44,18 +42,6 @@ const generateToken = (user) => {
     process.env.JWT_SECRET,
     { expiresIn: '30d' }
   );
-};
-
-// Short-lived token that only authorizes completing a 2FA challenge
-const generateTwoFactorToken = (user, pendingGoogleLink = null) => {
-  return jwt.sign({
-    userId: user.id,
-    tokenVersion: user.tokenVersion || 0,
-    purpose: 'twoFactor',
-    ...(pendingGoogleLink && { pendingGoogleLink }),
-  }, process.env.JWT_SECRET, {
-    expiresIn: '5m',
-  });
 };
 
 // Hash a plaintext password (explicit replacement for the old Mongoose
@@ -178,16 +164,6 @@ router.post('/signin', authLimiter, async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    // If 2FA is enabled, do NOT issue a session yet — the client must first
-    // complete a TOTP challenge with the short-lived 2FA token.
-    if (user.twoFactorEnabled) {
-      return res.json({
-        requiresTwoFactor: true,
-        twoFactorToken: generateTwoFactorToken(user),
-        message: 'Two-factor authentication code required',
-      });
-    }
-
     // Update last login
     usersRepo.updateLastLogin(user.id);
 
@@ -204,84 +180,6 @@ router.post('/signin', authLimiter, async (req, res) => {
   } catch (error) {
     console.error('Signin error:', error);
     res.status(500).json({ error: 'Error signing in' });
-  }
-});
-
-// Complete sign-in with a 2FA code (second factor)
-router.post('/signin/2fa', authLimiter, async (req, res) => {
-  try {
-    const { twoFactorToken, code } = req.body;
-
-    if (!twoFactorToken || !code) {
-      return res.status(400).json({ error: 'Two-factor token and code are required' });
-    }
-
-    let payload;
-    try {
-      payload = jwt.verify(twoFactorToken, process.env.JWT_SECRET);
-    } catch (err) {
-      return res.status(401).json({ error: 'Two-factor session expired. Please sign in again.' });
-    }
-
-    if (payload.purpose !== 'twoFactor' || !payload.userId) {
-      return res.status(401).json({ error: 'Invalid two-factor token' });
-    }
-
-    let user = usersRepo.findById(payload.userId);
-    if (!user || !user.twoFactorEnabled || !user.twoFactorSecret) {
-      return res.status(401).json({ error: 'Two-factor authentication is not active for this account' });
-    }
-    if (payload.tokenVersion !== (user.tokenVersion || 0)) {
-      return res.status(401).json({ error: 'Two-factor session expired. Please sign in again.' });
-    }
-
-    const verified = speakeasy.totp.verify({
-      secret: user.twoFactorSecret,
-      encoding: 'base32',
-      token: code,
-      window: 2,
-    });
-
-    if (!verified) {
-      return res.status(400).json({ error: 'Invalid two-factor code' });
-    }
-
-    // A Google account link is committed only after the second factor passes.
-    if (payload.pendingGoogleLink) {
-      const { googleId, discardPassword } = payload.pendingGoogleLink;
-      if (typeof googleId !== 'string' || !googleId || (user.googleId && user.googleId !== googleId)) {
-        return res.status(401).json({ error: 'Google account link is no longer valid.' });
-      }
-      const claimed = usersRepo.findByGoogleId(googleId);
-      if (claimed && claimed.id !== user.id) {
-        return res.status(409).json({ error: 'Google account is already linked elsewhere.' });
-      }
-      user = usersRepo.update(user.id, {
-        googleId,
-        isEmailVerified: true,
-        ...(discardPassword && {
-          password: null,
-          tokenVersion: (user.tokenVersion || 0) + 1,
-        }),
-      });
-    }
-
-    // Update last login
-    usersRepo.updateLastLogin(user.id);
-
-    const safeUser = usersRepo.toSafeUser(usersRepo.findById(user.id));
-
-    // Generate token
-    const token = generateToken(user);
-
-    res.json({
-      user: safeUser,
-      token,
-      session: { access_token: token, user: safeUser }
-    });
-  } catch (error) {
-    console.error('2FA signin error:', error);
-    res.status(500).json({ error: 'Error verifying two-factor code' });
   }
 });
 
@@ -460,12 +358,6 @@ router.post('/google', authLimiter, async (req, res) => {
               });
             }
           } else if (discardPassword === true) {
-            if (existing.twoFactorEnabled) {
-              return res.json({
-                requiresTwoFactor: true,
-                twoFactorToken: generateTwoFactorToken(existing, { googleId, discardPassword: true }),
-              });
-            }
             user = usersRepo.update(existing.id, {
               googleId,
               isEmailVerified: true,
@@ -483,12 +375,6 @@ router.post('/google', authLimiter, async (req, res) => {
         }
 
         if (!user) {
-          if (existing.twoFactorEnabled) {
-            return res.json({
-              requiresTwoFactor: true,
-              twoFactorToken: generateTwoFactorToken(existing, { googleId, discardPassword: false }),
-            });
-          }
           user = usersRepo.update(existing.id, {
             googleId,
             isEmailVerified: true,
@@ -512,15 +398,6 @@ router.post('/google', authLimiter, async (req, res) => {
     if (!user.name) {
       user = usersRepo.update(user.id, {
         name: parseName(name) || parseName([givenName, familyName].filter(Boolean).join(' ')) || 'Google',
-      });
-    }
-
-    // Google sign-in also requires the configured second factor.
-    if (user.twoFactorEnabled) {
-      return res.json({
-        requiresTwoFactor: true,
-        twoFactorToken: generateTwoFactorToken(user),
-        message: 'Two-factor authentication code required',
       });
     }
 
@@ -611,101 +488,6 @@ router.post('/reset-password', authLimiter, async (req, res) => {
   } catch (error) {
     console.error('Reset password error:', error);
     res.status(500).json({ error: 'Error resetting password' });
-  }
-});
-
-// Generate 2FA secret
-router.post('/2fa/setup', auth, async (req, res) => {
-  try {
-    const user = usersRepo.findById(req.userId);
-
-    if (user.twoFactorEnabled) {
-      return res.status(400).json({ error: 'Two-factor authentication is already enabled' });
-    }
-
-    const secret = speakeasy.generateSecret({
-      name: `CarbonCTRL (${user.email})`,
-      issuer: 'CarbonCTRL'
-    });
-
-    // Store temporary secret (don't save to DB until verified)
-    const qrCodeUrl = await QRCode.toDataURL(secret.otpauth_url);
-
-    res.json({
-      secret: secret.base32,
-      qrCode: qrCodeUrl,
-      manualEntryKey: secret.base32
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Verify and enable 2FA
-router.post('/2fa/verify', auth, async (req, res) => {
-  try {
-    const { token, secret } = req.body;
-
-    if (!token || !secret) {
-      return res.status(400).json({ error: 'Verification code and secret are required' });
-    }
-
-    const verified = speakeasy.totp.verify({
-      secret,
-      encoding: 'base32',
-      token,
-      window: 2
-    });
-
-    if (verified) {
-      usersRepo.update(req.userId, {
-        twoFactorSecret: secret,
-        twoFactorEnabled: true
-      });
-
-      res.json({ success: true });
-    } else {
-      res.status(400).json({ error: 'Invalid 2FA token' });
-    }
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Disable 2FA — requires the current TOTP code so a leaked session token
-// cannot silently downgrade the account's security.
-router.post('/2fa/disable', auth, async (req, res) => {
-  try {
-    const { token: code } = req.body;
-    const user = usersRepo.findById(req.userId);
-
-    if (!user || !user.twoFactorEnabled || !user.twoFactorSecret) {
-      return res.status(400).json({ error: 'Two-factor authentication is not enabled' });
-    }
-
-    if (!code) {
-      return res.status(400).json({ error: 'Enter your current two-factor code to disable 2FA' });
-    }
-
-    const verified = speakeasy.totp.verify({
-      secret: user.twoFactorSecret,
-      encoding: 'base32',
-      token: code,
-      window: 2
-    });
-
-    if (!verified) {
-      return res.status(400).json({ error: 'Invalid two-factor code' });
-    }
-
-    usersRepo.update(req.userId, {
-      twoFactorSecret: null,
-      twoFactorEnabled: false
-    });
-
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
   }
 });
 

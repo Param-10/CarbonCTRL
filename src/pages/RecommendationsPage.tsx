@@ -1,25 +1,48 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Leaf, ArrowRight, Star, AlertTriangle, Clock, DollarSign, Percent, RefreshCw, TrendingUp, Target, Zap } from 'lucide-react';
+import { Leaf, ArrowRight, AlertTriangle, Clock, DollarSign, Percent, RefreshCw, TrendingUp, Target, Zap, Info, ListPlus, Check } from 'lucide-react';
 import { useCarbonStore } from '../store/carbonStore';
-import { useCompanyStore } from '../store/companyStore';
+import { useCompanyStore, CompanyProfile } from '../store/companyStore';
 import { apiClient } from '../lib/api';
+import { sectorLabel } from '../lib/sectorColors';
+import { useActionStore } from '../store/actionStore';
+
+// While a background refresh runs, check for the new results this often, for up to 3 minutes
+const REFRESH_POLL_MS = 15000;
+const REFRESH_POLL_LIMIT = 12;
+
+// Profile fields Gemini uses to tailor recommendations, in the order they
+// appear on the Company Profile page.
+const CONTEXT_FIELD_LABELS: [keyof CompanyProfile, string][] = [
+  ['state', 'state'],
+  ['reductionBudget', 'budget'],
+  ['reductionTargetPercent', 'reduction target'],
+  ['premisesOwnership', 'premises'],
+  ['siteCount', 'number of sites'],
+  ['workModel', 'work model'],
+  ['renewableElectricityShare', 'renewable electricity'],
+  ['fleetSize', 'company vehicles'],
+  ['existingMeasures', 'measures already in place'],
+  ['reportingObligations', 'reporting obligations'],
+];
+
+const missingContextFields = (profile: CompanyProfile | null) =>
+  CONTEXT_FIELD_LABELS
+    .filter(([field]) => profile?.[field] === null || profile?.[field] === undefined)
+    .map(([, label]) => label);
 
 interface Recommendation {
   title: string;
   description: string;
   impact: number;
+  sector?: string | null;
   timeline: string;
+  timeline_months?: number | null;
   cost: string;
   roi_months?: number;
   priority?: string;
   industry_specific?: string;
-  // Legacy fields for backward compatibility
-  action?: string;
-  savings?: string;
-  incentives?: string;
-  tax_benefits?: string;
-  reasoning?: string;
 }
 
 interface RecommendationSummary {
@@ -34,7 +57,17 @@ interface RecommendationSummary {
 interface RecommendationResponse {
   recommendations: Recommendation[];
   summary?: RecommendationSummary;
+  /** Set when Gemini failed and standard recommendations were returned. */
+  notice?: string;
+  /** Present on saved Gemini results */
+  generated_at?: string;
+  is_outdated?: boolean;
+  /** A background refresh is queued or running on the server */
+  refreshing?: boolean;
+  selected_sectors?: string[];
 }
+
+const GENERATED_AT_FORMAT = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
 const RecommendationsPage = () => {
   const { carbonScore } = useCarbonStore();
@@ -44,37 +77,85 @@ const RecommendationsPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [selectedSectors, setSelectedSectors] = useState<string[]>([]);
   const [showSectorSelection, setShowSectorSelection] = useState(false);
-  const [testingGemini, setTestingGemini] = useState(false);
-  const [geminiStatus, setGeminiStatus] = useState<{ gemini_working: boolean; model?: string; error?: string; test_response?: Record<string, unknown>; raw_response?: string; configured: boolean } | null>(null);
+  const [loadingSaved, setLoadingSaved] = useState(true);
+  const { actions, load: loadActions, add: addAction } = useActionStore();
+  const [addingTitle, setAddingTitle] = useState<string | null>(null);
+  const [planError, setPlanError] = useState('');
 
   useEffect(() => {
-    // Initialize with top 3 sectors by default
+    loadActions();
+  }, [loadActions]);
+
+  const inPlan = new Set(actions.map((a) => a.title.toLowerCase()));
+
+  const addToPlan = async (rec: Recommendation) => {
+    setAddingTitle(rec.title);
+    setPlanError('');
+    try {
+      await addAction({
+        title: rec.title,
+        description: rec.description,
+        sector: rec.sector ?? null,
+        impact: typeof rec.impact === 'number' ? rec.impact : undefined,
+        cost: rec.cost,
+        timeline: rec.timeline,
+        priority: rec.priority,
+      });
+    } catch (err) {
+      setPlanError(err instanceof Error && err.message ? err.message : 'Could not add to your plan');
+    } finally {
+      setAddingTitle(null);
+    }
+  };
+
+  // Show the last saved recommendations straight away, without a new Gemini call
+  useEffect(() => {
+    let cancelled = false;
+    apiClient
+      .getLatestRecommendations()
+      .then(({ saved }: { saved: RecommendationResponse | null }) => {
+        if (cancelled || !saved) return;
+        setRecommendationData(saved);
+        if (saved.selected_sectors?.length) setSelectedSectors(saved.selected_sectors);
+      })
+      .catch((err: unknown) => console.error('Error loading saved recommendations:', err))
+      .finally(() => {
+        if (!cancelled) setLoadingSaved(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // When the server is already refreshing outdated results, pick them up when ready
+  const waitingForRefresh = Boolean(recommendationData.is_outdated && recommendationData.refreshing);
+  useEffect(() => {
+    if (!waitingForRefresh) return;
+    let polls = 0;
+    const timer = setInterval(async () => {
+      polls += 1;
+      try {
+        const { saved } = await apiClient.getLatestRecommendations();
+        if (saved && (!saved.is_outdated || !saved.refreshing)) setRecommendationData(saved);
+      } catch (err) {
+        console.error('Error checking for refreshed recommendations:', err);
+      }
+      if (polls >= REFRESH_POLL_LIMIT) clearInterval(timer);
+    }, REFRESH_POLL_MS);
+    return () => clearInterval(timer);
+  }, [waitingForRefresh]);
+
+  useEffect(() => {
+    // Default to the top 3 sectors unless a saved selection was restored
     if (carbonScore && carbonScore.emissions_breakdown) {
       const topSectors = Object.entries(carbonScore.emissions_breakdown)
         .sort(([, a], [, b]) => b - a)
         .slice(0, 3)
         .map(([sector]) => sector);
-      
-      setSelectedSectors(topSectors);
+
+      setSelectedSectors((current) => (current.length > 0 ? current : topSectors));
     }
   }, [carbonScore]);
-
-  const testGeminiConnection = async () => {
-    setTestingGemini(true);
-    try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'https://carbonctrl.onrender.com/api'}/gemini/test`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('carbonctrl_token')}`
-        }
-      });
-      const result = await response.json();
-      setGeminiStatus(result);
-    } catch {
-      setGeminiStatus({ error: 'Failed to test connection', gemini_working: false, configured: true });
-    } finally {
-      setTestingGemini(false);
-    }
-  };
 
   const fetchRecommendations = async () => {
     if (!carbonScore || selectedSectors.length === 0) return;
@@ -86,7 +167,7 @@ const RecommendationsPage = () => {
       console.log('Fetching recommendations with enhanced data...');
       // Use backend API for recommendations
       const result = await apiClient.getRecommendations({
-        industry: profile?.industry || 'Technology',
+        industry: profile?.industry,
         emissions_data: {
           total_emissions_tons_co2e: carbonScore.total_emissions_tons_co2e,
           carbon_rating: carbonScore.carbon_rating,
@@ -120,6 +201,14 @@ const RecommendationsPage = () => {
     fetchRecommendations();
   };
 
+  // Share of total emissions, or null when there is nothing to divide by
+  const percentOfTotal = (tonnes: number) =>
+    carbonScore && carbonScore.total_emissions_tons_co2e > 0
+      ? (tonnes / carbonScore.total_emissions_tons_co2e) * 100
+      : null;
+
+  const missingContext = missingContextFields(profile);
+
   const getPriorityColor = (priority: string) => {
     switch (priority?.toLowerCase()) {
       case 'high': return 'text-red-400 bg-red-400/20';
@@ -142,7 +231,7 @@ const RecommendationsPage = () => {
     return (
       <div className="space-y-8">
         <div>
-          <h1 className="font-space text-4xl font-bold text-white mb-2">Smart Recommendations</h1>
+          <h1 className="font-space text-3xl sm:text-4xl font-bold text-white mb-2">Smart Recommendations</h1>
           <p className="font-mono text-emerald-100/80">AI-powered suggestions to reduce your carbon footprint</p>
         </div>
 
@@ -154,15 +243,15 @@ const RecommendationsPage = () => {
           <AlertTriangle className="w-12 h-12 text-emerald-400 mx-auto mb-4" />
           <h2 className="font-space text-xl font-bold text-white mb-2">No Data Available</h2>
           <p className="font-mono text-emerald-100/70 mb-6">
-            Please complete your carbon assessment first to receive personalized recommendations.
+            Record at least one activity on the Dashboard to get personalized recommendations.
           </p>
-          <a
-            href="/dashboard"
+          <Link
+            to="/dashboard"
             className="glass-button px-6 py-3 rounded-lg inline-flex items-center gap-2 group"
           >
-            <span className="font-mono">Start Assessment</span>
+            <span className="font-mono">Add Your First Activity</span>
             <ArrowRight className="w-5 h-5 transform group-hover:translate-x-1 transition-transform" />
-          </a>
+          </Link>
         </motion.div>
       </div>
     );
@@ -172,52 +261,74 @@ const RecommendationsPage = () => {
     <div className="space-y-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="font-space text-4xl font-bold text-white mb-2">Recommendations</h1>
-          <p className="font-mono text-emerald-100/80">ML-driven suggestions with optional Gemini enhancement</p>
+          <h1 className="font-space text-3xl sm:text-4xl font-bold text-white mb-2">Recommendations</h1>
+          <p className="font-mono text-emerald-100/80">AI-generated suggestions tailored to your company profile</p>
         </div>
-        <button
-          onClick={testGeminiConnection}
-          disabled={testingGemini}
-          className="glass-button px-4 py-2 rounded-lg inline-flex items-center gap-2 group"
-        >
-          <Zap className="w-4 h-4" />
-          <span className="font-mono text-sm">
-            {testingGemini ? 'Testing...' : 'Test AI'}
-          </span>
-        </button>
       </div>
 
-      {/* Enhanced Integration Status */}
-      {geminiStatus && (
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className={`p-4 rounded-lg border ${
-            geminiStatus.gemini_working 
-              ? 'bg-green-500/10 border-green-500/20 text-green-400'
-              : 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+      {/* When the shown recommendations were made, and whether they still fit the data */}
+      {recommendationData.generated_at && !loading && (
+        <div
+          role={recommendationData.is_outdated ? 'status' : undefined}
+          className={`p-4 rounded-lg border flex flex-wrap items-center justify-between gap-3 ${
+            recommendationData.is_outdated
+              ? 'bg-amber-500/10 border-amber-500/30 text-amber-200'
+              : 'bg-gray-800/40 border-emerald-500/10 text-emerald-100/70'
           }`}
         >
-          <div className="flex items-center gap-2 mb-2">
-            {geminiStatus.gemini_working ? (
-              <Star className="w-5 h-5" />
-            ) : (
-              <AlertTriangle className="w-5 h-5" />
-            )}
-            <span className="font-mono text-sm font-semibold">
-              {geminiStatus.gemini_working 
-                ? `Enhanced integration active (${geminiStatus.model})`
-                : `ML engine active (Gemini unavailable)`
-              }
-            </span>
-          </div>
-          <div className="font-mono text-xs opacity-80">
-            {geminiStatus.gemini_working 
-              ? '• ML models provide foundation • Gemini adds contextual intelligence • Best of both systems'
-              : '• Using trained ML models • Intelligent fallback system • Full functionality maintained'
-            }
+          <span className="font-mono text-sm">
+            {!recommendationData.is_outdated
+              ? `Generated ${GENERATED_AT_FORMAT.format(new Date(recommendationData.generated_at))}`
+              : recommendationData.refreshing
+                ? 'Your data changed, so these are being updated in the background. New recommendations will appear here shortly.'
+                : 'Your activities or company profile changed since these recommendations were generated.'}
+          </span>
+          {recommendationData.is_outdated && (
+            <button
+              onClick={fetchRecommendations}
+              disabled={selectedSectors.length === 0}
+              className="glass-button px-4 py-2 rounded-lg inline-flex items-center gap-2 font-mono text-sm disabled:opacity-50"
+            >
+              <RefreshCw className="w-4 h-4" />
+              {recommendationData.refreshing ? 'Update now' : 'Update recommendations'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Nudge to complete the profile context Gemini relies on */}
+      {missingContext.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="p-4 rounded-lg border bg-blue-500/10 border-blue-500/20 flex items-start gap-3"
+        >
+          <Info className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
+          <div className="font-mono text-sm text-blue-100/80">
+            <p>
+              Recommendations are more specific when your profile includes: {missingContext.join(', ')}.
+            </p>
+            <Link to="/company-profile" className="inline-flex items-center gap-1 mt-2 text-blue-300 hover:text-blue-200">
+              Complete company profile
+              <ArrowRight className="w-4 h-4" />
+            </Link>
           </div>
         </motion.div>
+      )}
+
+      {planError && (
+        <div role="alert" className="p-4 rounded-lg border bg-red-500/10 border-red-500/30 text-red-200 flex items-center gap-2">
+          <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+          <span className="font-mono text-sm">{planError}</span>
+        </div>
+      )}
+
+      {/* Shown when Gemini failed and standard recommendations were returned */}
+      {recommendationData.notice && (
+        <div role="status" className="p-4 rounded-lg border bg-amber-500/10 border-amber-500/20 text-amber-300 flex items-center gap-2">
+          <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+          <span className="font-mono text-sm">{recommendationData.notice}</span>
+        </div>
       )}
 
       {/* Summary Card with Source Tracking */}
@@ -229,7 +340,7 @@ const RecommendationsPage = () => {
           className="glass-panel p-6 rounded-xl"
         >
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-space text-xl font-bold text-white">Impact Summary</h3>
+            <h2 className="font-space text-xl font-bold text-white">Impact Summary</h2>
             {recommendationData.summary.source && (
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></div>
@@ -240,12 +351,12 @@ const RecommendationsPage = () => {
             )}
           </div>
           
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="text-center">
               <div className="font-space text-2xl font-bold text-emerald-400">
                 {recommendationData.summary.total_potential_reduction?.toFixed(1) || '0'}
               </div>
-              <div className="font-mono text-xs text-emerald-100/60">tonnes CO₂/year</div>
+              <div className="font-mono text-xs text-emerald-100/60">tonnes CO₂e</div>
             </div>
             <div className="text-center">
               <div className="font-space text-2xl font-bold text-blue-400">
@@ -275,15 +386,16 @@ const RecommendationsPage = () => {
         animate={{ opacity: 1, y: 0 }}
         className="feature-card p-8"
       >
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-4">
-            <div className="bg-emerald-500/20 p-4 rounded-lg">
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+          <div className="flex items-center gap-4 min-w-0 flex-1 basis-64">
+            <div className="bg-emerald-500/20 p-4 rounded-lg flex-shrink-0">
               <Leaf className="w-6 h-6 text-emerald-400" />
             </div>
-            <div>
+            <div className="min-w-0">
               <h2 className="font-space text-xl font-semibold text-white">Current Status</h2>
               <p className="font-mono text-sm text-emerald-100/70">
                 Based on your carbon assessment results for {profile?.name || 'your company'}
+                {carbonScore.period && ` · activities from ${carbonScore.period.start} to ${carbonScore.period.end}`}
               </p>
             </div>
           </div>
@@ -296,7 +408,7 @@ const RecommendationsPage = () => {
         </div>
 
         {/* Status metrics */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           <div className="p-4 bg-gray-800/50 rounded-lg border border-emerald-500/20">
             <p className="font-mono text-sm text-emerald-100/70 mb-2">Carbon Rating</p>
             <div className="flex items-baseline gap-2">
@@ -362,7 +474,7 @@ const RecommendationsPage = () => {
               <div>
                 <span className="font-mono text-emerald-100/70">Potential Impact: </span>
                 <span className="font-mono text-white">
-                  {((recommendationData.summary.total_potential_reduction / carbonScore.total_emissions_tons_co2e) * 100).toFixed(1)}% reduction
+                  {percentOfTotal(recommendationData.summary.total_potential_reduction)?.toFixed(1) ?? '0.0'}% reduction
                 </span>
               </div>
             </div>
@@ -389,11 +501,11 @@ const RecommendationsPage = () => {
               </button>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {Object.keys(carbonScore.emissions_breakdown).map((sector) => {
                 const isSelected = selectedSectors.includes(sector);
                 const emissions = carbonScore.emissions_breakdown[sector];
-                const percentage = ((emissions / carbonScore.total_emissions_tons_co2e) * 100).toFixed(1);
+                const percentage = (percentOfTotal(emissions) ?? 0).toFixed(1);
                 
                 return (
                   <button
@@ -405,7 +517,7 @@ const RecommendationsPage = () => {
                         : 'bg-gray-800/50 border-gray-600 text-gray-300 hover:border-emerald-500/50'
                     }`}
                   >
-                    <div className="text-sm font-mono font-semibold">{sector}</div>
+                    <div className="text-sm font-mono font-semibold">{sectorLabel(sector)}</div>
                     <div className="text-xs opacity-70">
                       {emissions.toFixed(1)} tCO₂e ({percentage}%)
                     </div>
@@ -426,6 +538,7 @@ const RecommendationsPage = () => {
         >
           <div className="animate-spin w-8 h-8 border-2 border-emerald-400 border-t-transparent rounded-full mx-auto mb-4"></div>
           <p className="font-mono text-emerald-100/70">Generating personalized recommendations with AI...</p>
+          <p className="font-mono text-xs text-emerald-100/50 mt-2">Gemini weighs your data, budget and premises carefully, so this can take up to a minute.</p>
         </motion.div>
       )}
 
@@ -449,15 +562,15 @@ const RecommendationsPage = () => {
       {/* Recommendations Grid */}
       {!loading && recommendationData.recommendations.length > 0 && (
         <div className="grid gap-6">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-space text-2xl font-bold text-white">
               Personalized Recommendations ({recommendationData.recommendations.length})
             </h2>
-            {recommendationData.summary && (
+            {recommendationData.summary && percentOfTotal(recommendationData.summary.total_potential_reduction) !== null && (
               <div className="flex items-center gap-2 text-sm">
                 <TrendingUp className="w-4 h-4 text-emerald-400" />
                 <span className="font-mono text-emerald-100/70">
-                  Up to {((recommendationData.summary.total_potential_reduction / carbonScore.total_emissions_tons_co2e) * 100).toFixed(0)}% reduction possible
+                  Up to {percentOfTotal(recommendationData.summary.total_potential_reduction)?.toFixed(0)}% reduction possible
                 </span>
               </div>
             )}
@@ -472,15 +585,35 @@ const RecommendationsPage = () => {
               className="feature-card p-6 hover:border-emerald-500/30 transition-all duration-300"
             >
               <div className="flex items-start justify-between mb-4">
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-2">
+                <div className="flex-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-2">
                     <h3 className="font-space text-xl font-semibold text-white">
-                      {rec.title || rec.action}
+                      {rec.title}
                     </h3>
                     {rec.priority && (
                       <span className={`px-2 py-1 rounded-full text-xs font-mono ${getPriorityColor(rec.priority)}`}>
                         {rec.priority}
                       </span>
+                    )}
+                    {rec.sector && (
+                      <span className="px-2 py-1 rounded-full text-xs font-mono text-emerald-300 bg-emerald-500/15">
+                        {sectorLabel(rec.sector)}
+                      </span>
+                    )}
+                    {recommendationData.summary?.source === 'Gemini AI' && (
+                      inPlan.has(rec.title.toLowerCase()) ? (
+                        <Link to="/action-plan" className="ml-auto inline-flex items-center gap-1 font-mono text-xs text-emerald-300">
+                          <Check className="w-4 h-4" /> In your plan
+                        </Link>
+                      ) : (
+                        <button
+                          onClick={() => addToPlan(rec)}
+                          disabled={addingTitle !== null}
+                          className="ml-auto inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-emerald-500/30 font-mono text-xs text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"
+                        >
+                          <ListPlus className="w-4 h-4" /> {addingTitle === rec.title ? 'Adding...' : 'Add to plan'}
+                        </button>
+                      )
                     )}
                   </div>
                   <p className="font-mono text-emerald-100/80 leading-relaxed mb-4">
@@ -499,13 +632,13 @@ const RecommendationsPage = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="flex items-center gap-2">
                   <TrendingUp className="w-4 h-4 text-emerald-400" />
                   <div>
                     <p className="font-mono text-xs text-emerald-100/60">Impact</p>
                     <p className="font-mono text-sm font-semibold text-white">
-                      {typeof rec.impact === 'string' ? rec.impact : `${rec.impact.toFixed(1)} tCO₂e`}
+                      {rec.impact.toFixed(1)} tCO₂e
                     </p>
                   </div>
                 </div>
@@ -530,45 +663,19 @@ const RecommendationsPage = () => {
                   <div className="flex items-center gap-2">
                     <Percent className="w-4 h-4 text-yellow-400" />
                     <div>
-                      <p className="font-mono text-xs text-emerald-100/60">ROI</p>
+                      <p className="font-mono text-xs text-emerald-100/60">Payback</p>
                       <p className="font-mono text-sm font-semibold text-white">{rec.roi_months} months</p>
                     </div>
                   </div>
                 )}
               </div>
-
-              {/* Legacy fields support */}
-              {(rec.savings || rec.incentives || rec.tax_benefits) && (
-                <div className="mt-4 pt-4 border-t border-emerald-500/20">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-                    {rec.savings && (
-                      <div>
-                        <span className="font-mono text-emerald-100/70">Savings: </span>
-                        <span className="font-mono text-white">{rec.savings}</span>
-                      </div>
-                    )}
-                    {rec.incentives && (
-                      <div>
-                        <span className="font-mono text-emerald-100/70">Incentives: </span>
-                        <span className="font-mono text-white">{rec.incentives}</span>
-                      </div>
-                    )}
-                    {rec.tax_benefits && (
-                      <div>
-                        <span className="font-mono text-emerald-100/70">Tax Benefits: </span>
-                        <span className="font-mono text-white">{rec.tax_benefits}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
             </motion.div>
           ))}
         </div>
       )}
 
       {/* Generate recommendations state */}
-      {!loading && recommendationData.recommendations.length === 0 && !error && (
+      {!loading && !loadingSaved && recommendationData.recommendations.length === 0 && !error && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}

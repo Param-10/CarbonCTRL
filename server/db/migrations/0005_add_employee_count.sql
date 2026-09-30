@@ -1,0 +1,1 @@
+ALTER TABLE `company_profiles` ADD `employee_count` integer;

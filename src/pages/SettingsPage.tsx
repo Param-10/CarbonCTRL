@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
-import { User, Shield, Trash2 } from 'lucide-react';
+import { User, Shield, Trash2, Bell } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
-import { TwoFactorSettings } from '../components/TwoFactorSettings';
 import { apiClient } from '../lib/api';
 
 const SettingsPage = () => {
@@ -27,6 +26,32 @@ const SettingsPage = () => {
     type: 'success' | 'error';
     message: string;
   } | null>(null);
+  const [reminders, setReminders] = useState<{ monthlyReminders: boolean; emailConfigured: boolean } | null>(null);
+  const [savingReminders, setSavingReminders] = useState(false);
+
+  useEffect(() => {
+    apiClient
+      .getReminderSettings()
+      .then(setReminders)
+      .catch((err: unknown) => console.error('Error loading reminder settings:', err));
+  }, []);
+
+  const toggleReminders = async () => {
+    if (!reminders) return;
+    setSavingReminders(true);
+    try {
+      const updated = await apiClient.updateReminderSettings(!reminders.monthlyReminders);
+      setReminders(updated);
+      setNotifications({
+        type: 'success',
+        message: updated.monthlyReminders ? 'Monthly reminders turned on' : 'Monthly reminders turned off',
+      });
+    } catch (err) {
+      setNotifications({ type: 'error', message: err instanceof Error ? err.message : 'Could not update reminders' });
+    } finally {
+      setSavingReminders(false);
+    }
+  };
 
   // Update profile data when user changes
   useEffect(() => {
@@ -127,7 +152,7 @@ const SettingsPage = () => {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="font-space text-4xl font-bold text-white mb-3">Settings</h1>
+        <h1 className="font-space text-3xl sm:text-4xl font-bold text-white mb-3">Settings</h1>
         <p className="font-mono text-emerald-100/80">Manage your account preferences and security</p>
       </div>
 
@@ -149,7 +174,7 @@ const SettingsPage = () => {
           <h2 className="font-space text-2xl font-semibold text-white">Profile Information</h2>
         </div>
 
-        <div className="grid md:grid-cols-2 gap-6">
+        <div className="grid lg:grid-cols-2 gap-6">
           <div>
             <label className="block font-mono text-sm text-emerald-100/70 mb-3" htmlFor="settings-name">Name</label>
             <input
@@ -163,9 +188,9 @@ const SettingsPage = () => {
             />
           </div>
 
-          <div className="md:col-span-2">
+          <div className="lg:col-span-2">
             <label className="block font-mono text-sm text-emerald-100/70 mb-3">Email</label>
-            <div className="w-full bg-gray-800/30 border border-gray-700/30 rounded-lg px-4 py-3 text-gray-400 font-mono">
+            <div className="w-full bg-gray-800/30 border border-gray-700/30 rounded-lg px-4 py-3 text-gray-400 font-mono break-all">
               {user.email}
             </div>
             <p className="font-mono text-xs text-gray-500 mt-2">Email cannot be changed</p>
@@ -179,6 +204,43 @@ const SettingsPage = () => {
             className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-mono text-sm py-3 px-6 rounded-lg transition-colors disabled:opacity-50"
           >
             {loading.profile ? 'Updating...' : 'Update Profile'}
+          </button>
+        </div>
+      </div>
+
+      {/* Notifications */}
+      <div className="feature-card p-8">
+        <div className="flex items-center gap-3 mb-6">
+          <Bell className="w-6 h-6 text-emerald-400" />
+          <h2 className="font-space text-2xl font-semibold text-white">Notifications</h2>
+        </div>
+        <div className="flex items-start justify-between gap-6">
+          <div>
+            <h3 id="monthly-reminders-label" className="font-mono text-white mb-1">Monthly reminder email</h3>
+            <p className="font-mono text-sm text-gray-400 max-w-xl">
+              From the 5th of each month, we'll email you if last month hasn't been logged yet. At most one email a month.
+            </p>
+            {reminders && !reminders.emailConfigured && (
+              <p className="font-mono text-xs text-amber-300/80 mt-2">
+                Email isn't set up on this server yet, so reminders will start once it is.
+              </p>
+            )}
+          </div>
+          <button
+            role="switch"
+            aria-checked={reminders?.monthlyReminders ?? false}
+            aria-labelledby="monthly-reminders-label"
+            onClick={toggleReminders}
+            disabled={!reminders || savingReminders}
+            className={`relative inline-flex h-7 w-12 flex-shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+              reminders?.monthlyReminders ? 'bg-emerald-500' : 'bg-gray-600'
+            }`}
+          >
+            <span
+              className={`inline-block h-5 w-5 mt-1 rounded-full bg-white transition-transform ${
+                reminders?.monthlyReminders ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
           </button>
         </div>
       </div>
@@ -252,17 +314,6 @@ const SettingsPage = () => {
           )}
         </div>
       </div>
-
-      {/* Two-Factor Authentication */}
-      <TwoFactorSettings 
-        user={user} 
-        onUpdate={async () => {
-          const response = await apiClient.getSession();
-          if (response.session) setSession(response.session);
-          setNotifications({ type: 'success', message: '2FA settings updated successfully' });
-          setTimeout(() => setNotifications(null), 3000);
-        }} 
-      />
 
       {/* Danger Zone */}
       <div className="feature-card p-8 border-red-500/20">

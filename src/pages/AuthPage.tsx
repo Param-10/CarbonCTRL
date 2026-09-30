@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Leaf, Mail, Lock, ArrowLeft, ArrowRight, KeyRound } from 'lucide-react';
+import { Leaf, Mail, Lock, ArrowLeft, ArrowRight } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { apiClient, ApiError } from '../lib/api';
 import { initializeGoogleSignIn, loadGoogleIdentityScript } from '../lib/googleIdentity';
@@ -16,8 +16,6 @@ export default function AuthPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [twoFactorToken, setTwoFactorToken] = useState<string | null>(null);
-  const [twoFactorCode, setTwoFactorCode] = useState('');
   const [forgotMode, setForgotMode] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotMessage, setForgotMessage] = useState('');
@@ -29,10 +27,10 @@ export default function AuthPage() {
   const [linkLoading, setLinkLoading] = useState(false);
   const googleButtonRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
-  const { signIn, signUp, signInWith2FA, setSession } = useAuthStore();
+  const { signIn, signUp, setSession } = useAuthStore();
 
   // Keep Google's existing one-tap button flow from main. The signed ID token
-  // is verified by the server; 2FA is still required before a session is issued.
+  // is verified by the server before a session is issued.
   useEffect(() => {
     if (!GOOGLE_CLIENT_ID) return;
     let cancelled = false;
@@ -46,10 +44,6 @@ export default function AuthPage() {
         setLoading(true);
         try {
           const response = await apiClient.googleAuth(credential);
-          if (response.requiresTwoFactor) {
-            setTwoFactorToken(response.twoFactorToken);
-            return;
-          }
           const user = { ...response.user, id: response.user._id };
           setSession({ access_token: response.token, user });
           navigate('/dashboard');
@@ -82,32 +76,13 @@ export default function AuthPage() {
 
     try {
       if (isSignIn) {
-        const twoFactor = await signIn(email, password);
-        if (twoFactor) {
-          // Account has 2FA enabled — ask for the authenticator code
-          setTwoFactorToken(twoFactor.twoFactorToken);
-          return;
-        }
+        await signIn(email, password);
       } else {
         await signUp(name, email, password);
       }
       navigate('/dashboard');
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
-      setError(errorMessage);
-    }
-  };
-
-  const handleTwoFactorSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-
-    try {
-      if (!twoFactorToken) return;
-      await signInWith2FA(twoFactorToken, twoFactorCode);
-      navigate('/dashboard');
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : 'Invalid verification code';
       setError(errorMessage);
     }
   };
@@ -126,11 +101,6 @@ export default function AuthPage() {
     }
   };
 
-  const cancelTwoFactor = () => {
-    setTwoFactorToken(null);
-    setTwoFactorCode('');
-  };
-
   const handleGoogleLinkSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pendingGoogleLink) return;
@@ -143,12 +113,6 @@ export default function AuthPage() {
           ? { password: linkPassword }
           : { discardPassword: true };
       const response = await apiClient.googleLink(pendingGoogleLink.idToken, options);
-      if (response.requiresTwoFactor) {
-        setTwoFactorToken(response.twoFactorToken);
-        setPendingGoogleLink(null);
-        setLinkPassword('');
-        return;
-      }
       const user = { ...response.user, id: response.user._id }; // Add id for compatibility
       setSession({ access_token: response.token, user });
       setPendingGoogleLink(null);
@@ -181,7 +145,6 @@ export default function AuthPage() {
 
           <h2 className="text-3xl font-bold text-center text-white mb-8 font-space">
             {pendingGoogleLink ? 'Link Google Account'
-              : twoFactorToken && !forgotMode ? 'Two-Factor Authentication'
               : forgotMode ? 'Reset Password'
               : isSignIn ? 'Welcome Back' : 'Create Account'}
           </h2>
@@ -193,7 +156,7 @@ export default function AuthPage() {
           )}
 
           {/* Keep Google's rendered button mounted while showing account challenges. */}
-          <div className={twoFactorToken || forgotMode || pendingGoogleLink ? 'hidden' : 'mb-6'}>
+          <div className={forgotMode || pendingGoogleLink ? 'hidden' : 'mb-6'}>
             <div ref={googleButtonRef} className="flex justify-center" />
             {GOOGLE_CLIENT_ID && <div className="relative mt-6">
                 <div className="absolute inset-0 flex items-center">
@@ -274,52 +237,7 @@ export default function AuthPage() {
             </>
           )}
 
-          {twoFactorToken && !forgotMode && (
-            <>
-              {/* 2FA code entry */}
-              <p className="text-center text-sm text-emerald-100/80 font-mono mb-6">
-                Enter the 6-digit code from your authenticator app to complete sign-in.
-              </p>
-              <form onSubmit={handleTwoFactorSubmit} className="space-y-6">
-                <div>
-                  <label className="block text-sm font-medium text-gray-200 mb-2 font-mono" htmlFor="2fa-code">
-                    Authentication Code
-                  </label>
-                  <div className="relative">
-                    <KeyRound className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-                    <input
-                      id="2fa-code"
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={6}
-                      value={twoFactorCode}
-                      onChange={(e) => setTwoFactorCode(e.target.value.replace(/\D/g, ''))}
-                      className="w-full bg-gray-800/50 border border-emerald-500/30 rounded-lg py-3 px-10 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/50 font-mono"
-                      placeholder="123456"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={loading || twoFactorCode.length !== 6}
-                  className="w-full bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-mono text-sm py-3 px-6 rounded-lg transition-colors duration-200 disabled:opacity-50"
-                >
-                  {loading ? 'Verifying...' : 'Verify & Sign In'}
-                </button>
-                <button
-                  type="button"
-                  onClick={cancelTwoFactor}
-                  className="w-full text-center text-emerald-100/60 hover:text-emerald-100 transition-colors duration-200 font-mono text-sm"
-                >
-                  Back to sign in
-                </button>
-              </form>
-            </>
-          )}
-
-          {forgotMode && !twoFactorToken && (
+          {forgotMode && (
             <>
               <p className="text-center text-sm text-emerald-100/80 font-mono mb-6">
                 Enter your account email and we'll send you a password reset link.
@@ -367,7 +285,7 @@ export default function AuthPage() {
             </>
           )}
 
-          {!twoFactorToken && !forgotMode && !pendingGoogleLink && (
+          {!forgotMode && !pendingGoogleLink && (
             <form onSubmit={handleSubmit} className="space-y-6">
               {!isSignIn && (
                 <div>
@@ -443,7 +361,7 @@ export default function AuthPage() {
             </form>
           )}
 
-          {!twoFactorToken && !forgotMode && !pendingGoogleLink && (
+          {!forgotMode && !pendingGoogleLink && (
             <div className="mt-6 text-center">
               <button
                 onClick={() => setIsSignIn(!isSignIn)}

@@ -5,6 +5,18 @@ import { useAuthStore } from '../store/authStore';
 const LAST_PAGE_KEY = 'carbonctrl_last_page';
 const DEFAULT_AUTHENTICATED_PAGE = '/dashboard';
 const DEFAULT_UNAUTHENTICATED_PAGE = '/';
+// Signed-in pages that are remembered and restored after a reload
+const PROTECTED_PATHS = [
+  '/how-it-works',
+  '/dashboard',
+  '/recommendations',
+  '/action-plan',
+  '/report',
+  '/methodology',
+  '/company-profile',
+  '/settings',
+  '/offset-projects',
+];
 
 export function usePagePersistence() {
   const location = useLocation();
@@ -16,8 +28,7 @@ export function usePagePersistence() {
   useEffect(() => {
     if (user && location.pathname !== '/auth') {
       // Only save authenticated pages, exclude auth page
-      const protectedPaths = ['/dashboard', '/recommendations', '/company-profile', '/settings', '/offset-projects'];
-      if (protectedPaths.includes(location.pathname)) {
+      if (PROTECTED_PATHS.includes(location.pathname)) {
         localStorage.setItem(LAST_PAGE_KEY, location.pathname);
         console.log('CarbonCTRL: Saved current page to localStorage:', location.pathname);
       }
@@ -41,8 +52,7 @@ export function usePagePersistence() {
       }
       // If user is authenticated and on a valid page, save it immediately
       else {
-        const protectedPaths = ['/dashboard', '/recommendations', '/company-profile', '/settings', '/offset-projects'];
-        if (protectedPaths.includes(currentPath)) {
+        if (PROTECTED_PATHS.includes(currentPath)) {
           localStorage.setItem(LAST_PAGE_KEY, currentPath);
           console.log('CarbonCTRL: Updated last page on direct load:', currentPath);
         }
@@ -52,8 +62,7 @@ export function usePagePersistence() {
       localStorage.removeItem(LAST_PAGE_KEY);
       
       // If we're on a protected page without auth, redirect to landing
-      const protectedPaths = ['/dashboard', '/recommendations', '/company-profile', '/settings', '/offset-projects'];
-      if (protectedPaths.includes(location.pathname)) {
+      if (PROTECTED_PATHS.includes(location.pathname)) {
         console.log('Redirecting unauthenticated user to landing page');
         navigate(DEFAULT_UNAUTHENTICATED_PAGE, { replace: true });
       }

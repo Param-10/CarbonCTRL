@@ -37,9 +37,56 @@ describe('SQLite schema migration', () => {
     expect(columns).toContain('token_version');
     expect(columns).toContain('reset_password_token');
     expect(columns).toContain('reset_password_expires');
-    expect(columns).toContain('two_factor_secret');
     expect(columns).toContain('google_id');
     expect(columns).toContain('name');
+  });
+
+  it('applies migration 0003: recommendation context columns on company_profiles', () => {
+    const columns = sqlite
+      .prepare('PRAGMA table_info(company_profiles)')
+      .all()
+      .map((c) => c.name);
+
+    for (const expected of [
+      'reduction_budget',
+      'reduction_target_percent',
+      'reduction_target_year',
+      'premises_ownership',
+      'renewable_electricity_share',
+      'fleet_size',
+      'fleet_type',
+      'work_model',
+      'site_count',
+      'existing_measures',
+      'reporting_obligations',
+      'employee_count',
+    ]) {
+      expect(columns).toContain(expected);
+    }
+  });
+
+  it('applies migration 0004: activity_date on carbon_activities', () => {
+    const columns = sqlite
+      .prepare('PRAGMA table_info(carbon_activities)')
+      .all()
+      .map((c) => c.name);
+
+    expect(columns).toContain('activity_date');
+  });
+
+  it('applies migration 0008: action plan table and reminder settings', () => {
+    const tables = sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name);
+    const userColumns = sqlite.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+
+    expect(tables).toContain('action_items');
+    expect(userColumns).toEqual(expect.arrayContaining(['monthly_reminders', 'last_reminder_month']));
+  });
+
+  it('applies migration 0011: two-factor columns removed from users', () => {
+    const columns = sqlite.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+
+    expect(columns).not.toContain('two_factor_secret');
+    expect(columns).not.toContain('two_factor_enabled');
   });
 
   it('enforces the unique email constraint', () => {

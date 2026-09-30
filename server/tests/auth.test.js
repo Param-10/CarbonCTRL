@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
-import speakeasy from 'speakeasy';
 import { setTempDb, cleanUpDb } from './helpers/db.js';
 
 // ---------------------------------------------------------------------------
@@ -48,7 +47,6 @@ const session = (token) =>
 
 const googleSignIn = (body) => agent.post('/api/auth/google').send(body);
 
-const totp = (secret) => speakeasy.totp({ secret, encoding: 'base32' });
 
 const googlePayload = (sub, email) => ({
   sub,
@@ -107,18 +105,16 @@ describe('auth flows (SQLite)', () => {
     const res = await agent
       .get('/api/company/profile')
       .set('Authorization', `Bearer ${aliceToken}`);
+    // A missing profile is the normal new-user state: 200 with a JSON null body
     expect(res.status).toBe(200);
-    // res.json(undefined) sends an empty body; supertest parses it as {} — the
-    // point is that a missing profile is 200 (new-user state), not a 404.
-    expect(res.body).not.toHaveProperty('name');
-    expect(res.body).not.toHaveProperty('id');
+    expect(res.body).toBeNull();
   });
 
   it('creates and reads back a company profile', async () => {
     const profile = {
       name: 'Alice Industries',
       industry: 'Manufacturing',
-      employees: '50',
+      employees: '11-50',
       location: 'Austin, TX',
       phone: '+1-555-0100',
       email: 'alice@example.com',
@@ -144,81 +140,23 @@ describe('auth flows (SQLite)', () => {
     expect(res.status).toBe(401);
   });
 
-  describe('2FA enforcement', () => {
-    let token;
-    let secret;
-
-    beforeAll(async () => {
-      const res = await signup('mfa@example.com', 'StrongPass2!', 'Mfa', 'User');
-      token = res.body.token;
-    });
-
-    it('sign-in works without 2FA initially', async () => {
-      const res = await signin('mfa@example.com', 'StrongPass2!');
+  describe('without two-factor authentication', () => {
+    it('signs in straight to a session', async () => {
+      await signup('direct@example.com', 'StrongPass2!', 'Direct', 'User');
+      const res = await signin('direct@example.com', 'StrongPass2!');
+      expect(res.status).toBe(200);
+      expect(res.body.token).toBeTruthy();
       expect(res.body.requiresTwoFactor).toBeUndefined();
-      expect(res.body.token).toBeTruthy();
+      expect(res.body.user).not.toHaveProperty('twoFactorEnabled');
     });
 
-    it('sets up a secret', async () => {
-      const res = await agent
-        .post('/api/auth/2fa/setup')
-        .set('Authorization', `Bearer ${token}`);
-      expect(res.status).toBe(200);
-      expect(res.body.secret).toBeTruthy();
-      expect(res.body.qrCode).toMatch(/^data:image\/png;base64,/);
-      secret = res.body.secret;
-    });
-
-    it('verifies and enables 2FA from a TOTP code', async () => {
-      const res = await agent
-        .post('/api/auth/2fa/verify')
-        .set('Authorization', `Bearer ${token}`)
-        .send({ token: totp(secret), secret });
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-    });
-
-    it('rejects a verify without the echoed secret', async () => {
-      const res = await agent
-        .post('/api/auth/2fa/verify')
-        .set('Authorization', `Bearer ${token}`)
-        .send({ token: totp(secret) });
-      expect(res.status).toBe(400);
-    });
-
-    it('then requires a challenge at sign-in and rejects a wrong code', async () => {
-      const challenge = await signin('mfa@example.com', 'StrongPass2!');
-      expect(challenge.body.requiresTwoFactor).toBe(true);
-      expect(challenge.body.twoFactorToken).toBeTruthy();
-
-      const bypass = await session(challenge.body.twoFactorToken);
-      expect(bypass.status).toBe(401);
-
-      const bad = await agent
-        .post('/api/auth/signin/2fa')
-        .send({ twoFactorToken: challenge.body.twoFactorToken, code: '000000' });
-      expect(bad.status).toBe(400);
-    });
-
-    it('completes sign-in with the correct code', async () => {
-      const challenge = await signin('mfa@example.com', 'StrongPass2!');
-      const res = await agent
-        .post('/api/auth/signin/2fa')
-        .send({ twoFactorToken: challenge.body.twoFactorToken, code: totp(secret) });
-      expect(res.status).toBe(200);
-      expect(res.body.token).toBeTruthy();
-    });
-
-    it('disables 2FA with the current code and restores direct sign-in', async () => {
-      const res = await agent
-        .post('/api/auth/2fa/disable')
-        .set('Authorization', `Bearer ${token}`)
-        .send({ token: totp(secret) });
-      expect(res.status).toBe(200);
-
-      const direct = await signin('mfa@example.com', 'StrongPass2!');
-      expect(direct.body.requiresTwoFactor).toBeUndefined();
-    });
+    it.each(['/api/auth/2fa/setup', '/api/auth/2fa/verify', '/api/auth/2fa/disable', '/api/auth/signin/2fa'])(
+      'no longer serves %s',
+      async (path) => {
+        const res = await agent.post(path).send({});
+        expect(res.status).toBe(404);
+      }
+    );
   });
 
   describe('tokenVersion session invalidation', () => {
@@ -333,28 +271,6 @@ describe('auth flows (SQLite)', () => {
       googleToken = res.body.token;
     });
 
-    it('requires 2FA after Google sign-in when enabled', async () => {
-      const setup = await agent.post('/api/auth/2fa/setup')
-        .set('Authorization', `Bearer ${googleToken}`);
-      expect(setup.status).toBe(200);
-      const secret = setup.body.secret;
-      const enabled = await agent.post('/api/auth/2fa/verify')
-        .set('Authorization', `Bearer ${googleToken}`)
-        .send({ token: totp(secret), secret });
-      expect(enabled.status).toBe(200);
-
-      globalThis.__googlePayload = googlePayload('sub-new', 'gnew@example.com');
-      const challenge = await googleSignIn({ googleToken: 'mock-auth-code' });
-      expect(challenge.status).toBe(200);
-      expect(challenge.body.token).toBeUndefined();
-      expect(challenge.body.requiresTwoFactor).toBe(true);
-      expect((await session(challenge.body.twoFactorToken)).status).toBe(401);
-      const completed = await agent.post('/api/auth/signin/2fa')
-        .send({ twoFactorToken: challenge.body.twoFactorToken, code: totp(secret) });
-      expect(completed.status).toBe(200);
-      expect(completed.body.token).toBeTruthy();
-    });
-
     it('requires the existing password before linking (LINK_PASSWORD_REQUIRED)', async () => {
       await signup('linky@example.com', 'LinkPass1!', 'Linky', 'User');
 
@@ -376,30 +292,6 @@ describe('auth flows (SQLite)', () => {
       globalThis.__googlePayload = googlePayload('sub-linky', 'linky@example.com');
       const again = await googleSignIn({ googleToken: 'mock-auth-code' });
       expect(again.status).toBe(200);
-    });
-
-    it('waits for 2FA before linking Google to a protected account', async () => {
-      const created = await signup('protected-link@example.com', 'LinkPass1!', 'Protected', 'User');
-      const setup = await agent.post('/api/auth/2fa/setup')
-        .set('Authorization', `Bearer ${created.body.token}`);
-      const secret = setup.body.secret;
-      await agent.post('/api/auth/2fa/verify')
-        .set('Authorization', `Bearer ${created.body.token}`)
-        .send({ token: totp(secret), secret });
-
-      globalThis.__googlePayload = googlePayload('sub-protected-link', 'protected-link@example.com');
-      const first = await googleSignIn({ credential: 'google-mock-id-token' });
-      expect(first.body.code).toBe('LINK_PASSWORD_REQUIRED');
-      const challenge = await googleSignIn({ idToken: first.body.idToken, password: 'LinkPass1!' });
-      expect(challenge.body.requiresTwoFactor).toBe(true);
-      const { usersRepo } = await import('../db/repos.js');
-      expect(usersRepo.findByEmail('protected-link@example.com').googleId).toBeNull();
-
-      const completed = await agent.post('/api/auth/signin/2fa')
-        .send({ twoFactorToken: challenge.body.twoFactorToken, code: totp(secret) });
-      expect(completed.status).toBe(200);
-      expect(completed.body.token).toBeTruthy();
-      expect(usersRepo.findByEmail('protected-link@example.com').googleId).toBe('sub-protected-link');
     });
 
     it('rejects an incorrect password during linking', async () => {

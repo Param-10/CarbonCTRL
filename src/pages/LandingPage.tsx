@@ -41,7 +41,7 @@ const LandingPage = () => {
           <div className="flex justify-between h-20 items-center gap-3">
             <Link to="/" className="flex items-center gap-2 sm:gap-3 min-w-0" aria-label="CarbonCTRL home">
               <Leaf className="w-7 h-7 sm:w-8 sm:h-8 text-emerald-400 flex-shrink-0" />
-              <span className="font-space text-white font-bold text-lg sm:text-xl hidden min-[360px]:inline">
+              <span className="font-space text-white font-bold text-lg sm:text-xl hidden sm:inline">
                 CarbonCTRL
               </span>
             </Link>

@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -13,10 +16,11 @@
     "server:dev": "nodemon server/index.js",
     "start": "npm run server",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "check:gemini": "node server/scripts/checkRecommendations.js"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.2.1",
+    "@google/genai": "^2.24.0",
     "@react-spring/web": "^9.7.5",
     "@react-three/drei": "^9.122.0",
     "@react-three/fiber": "^8.18.0",
@@ -33,12 +37,10 @@
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "lucide-react": "^0.344.0",
-    "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.22.2",
     "recharts": "^2.12.2",
-    "speakeasy": "^2.0.0",
     "three": "^0.161.0",
     "zustand": "^4.5.2"
   },

@@ -53,13 +53,6 @@ export default defineConfig({
     host: true,
     open: true,
     cors: true,
-    // Proxy relative /api/... calls to the Express backend in development.
-    proxy: {
-      '/api': {
-        target: 'http://localhost:3001',
-        changeOrigin: true
-      }
-    },
     hmr: {
       overlay: true
     }

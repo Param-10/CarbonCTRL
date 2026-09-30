@@ -10,7 +10,7 @@
  * The Mongoose bcrypt `pre('save')` hook no longer exists — password hashing is
  * now explicit in server/routes/auth.js (see hashPassword there).
  */
-import { and, asc, desc, eq, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, like, ne, or } from 'drizzle-orm';
 import { db, sqlite } from './index.js';
 import {
   users,
@@ -18,7 +18,10 @@ import {
   carbonAssessments,
   carbonActivities,
   emissions,
+  recommendationSets,
+  actionItems,
 } from './schema.js';
+import { PROFILE_CONTEXT_FIELDS } from '../config/profileOptions.js';
 
 /** Add `_id` (string) alongside `id` (number) for frontend compatibility. */
 export const withId = (row) => (row ? { ...row, _id: String(row.id) } : row);
@@ -92,13 +95,13 @@ export const usersRepo = {
       'lastName',
       'isEmailVerified',
       'googleId',
-      'twoFactorSecret',
-      'twoFactorEnabled',
       'lastLogin',
       'resetPasswordToken',
       'resetPasswordExpires',
       'emailVerificationToken',
       'tokenVersion',
+      'monthlyReminders',
+      'lastReminderMonth',
     ];
     for (const key of allowed) {
       if (fields[key] !== undefined) set[key] = fields[key];
@@ -107,14 +110,24 @@ export const usersRepo = {
     return withId(row);
   },
 
+  /** Users who opted in to monthly reminders and haven't had one for `month` (YYYY-MM). */
+  findDueForReminder(month) {
+    return db
+      .select()
+      .from(users)
+      .where(and(
+        eq(users.monthlyReminders, true),
+        or(isNull(users.lastReminderMonth), ne(users.lastReminderMonth, month))
+      ))
+      .all()
+      .map(withId);
+  },
+
   updateLastLogin(id) {
     return this.update(id, { lastLogin: now() });
   },
 
-  /**
-   * Strip sensitive fields from a user row (mirrors the old Mongoose toJSON).
-   * twoFactorSecret is never exposed to the client — only twoFactorEnabled.
-   */
+  /** Strip sensitive fields from a user row (mirrors the old Mongoose toJSON). */
   toSafeUser(row) {
     if (!row) return row;
     const {
@@ -122,7 +135,6 @@ export const usersRepo = {
       resetPasswordToken,
       resetPasswordExpires,
       emailVerificationToken,
-      twoFactorSecret,
       tokenVersion,
       ...safe
     } = row;
@@ -161,6 +173,7 @@ export const profilesRepo = {
         email: data.email ?? null,
         founded: data.founded ?? null,
         description: data.description ?? null,
+        ...Object.fromEntries(PROFILE_CONTEXT_FIELDS.map((key) => [key, data[key] ?? null])),
         createdAt: now(),
         updatedAt: now(),
       })
@@ -171,7 +184,10 @@ export const profilesRepo = {
 
   updateByUserId(userId, data) {
     const set = { updatedAt: now() };
-    const allowed = ['name', 'industry', 'employees', 'location', 'phone', 'email', 'founded', 'description'];
+    const allowed = [
+      'name', 'industry', 'employees', 'location', 'phone', 'email', 'founded', 'description',
+      ...PROFILE_CONTEXT_FIELDS,
+    ];
     for (const key of allowed) {
       if (data[key] !== undefined) set[key] = data[key];
     }
@@ -302,7 +318,7 @@ export const activitiesRepo = {
     return rows.map(withId);
   },
 
-  create({ assessmentId, userId, sector, subsector, activityAmount, activityUnit }) {
+  create({ assessmentId, userId, sector, subsector, activityAmount, activityUnit, activityDate }) {
     const row = db
       .insert(carbonActivities)
       .values({
@@ -312,12 +328,66 @@ export const activitiesRepo = {
         subsector,
         activityAmount,
         activityUnit,
+        activityDate,
         createdAt: now(),
         updatedAt: now(),
       })
       .returning()
       .get();
     return withId(row);
+  },
+
+  /**
+   * Set one month's total for each activity type in one transaction: existing
+   * entries of that type dated in `month` (YYYY-MM) are replaced by a single
+   * entry, so saving the monthly log twice never double counts.
+   */
+  replaceMonthTotals({ assessmentId, userId, month, activityDate, entries }) {
+    const run = sqlite.transaction(() =>
+      entries.map((entry) => {
+        db.delete(carbonActivities)
+          .where(and(
+            eq(carbonActivities.assessmentId, assessmentId),
+            eq(carbonActivities.sector, entry.sector),
+            eq(carbonActivities.subsector, entry.subsector),
+            like(carbonActivities.activityDate, `${month}-%`)
+          ))
+          .run();
+        return db
+          .insert(carbonActivities)
+          .values({ assessmentId, userId, ...entry, activityDate, createdAt: now(), updatedAt: now() })
+          .returning()
+          .get();
+      })
+    );
+    return run().map(withId);
+  },
+
+  /** Find an activity only if it belongs to the given user. */
+  findByIdAndUser(id, userId) {
+    return withId(
+      db
+        .select()
+        .from(carbonActivities)
+        .where(and(eq(carbonActivities.id, id), eq(carbonActivities.userId, userId)))
+        .limit(1)
+        .get()
+    );
+  },
+
+  /** Update an activity only if it belongs to the given user; null otherwise. */
+  updateByIdAndUser(id, userId, fields) {
+    const set = { updatedAt: now() };
+    for (const key of ['sector', 'subsector', 'activityAmount', 'activityUnit', 'activityDate']) {
+      if (fields[key] !== undefined) set[key] = fields[key];
+    }
+    const row = db
+      .update(carbonActivities)
+      .set(set)
+      .where(and(eq(carbonActivities.id, id), eq(carbonActivities.userId, userId)))
+      .returning()
+      .get();
+    return row ? withId(row) : null;
   },
 
   /** Delete an activity only if it belongs to the given user. */
@@ -387,22 +457,103 @@ export const emissionsRepo = {
 };
 
 /* ------------------------------------------------------------------ */
+/* Saved recommendations                                               */
+/* ------------------------------------------------------------------ */
+
+export const recommendationSetsRepo = {
+  findByUserId(userId) {
+    return withId(
+      db.select().from(recommendationSets).where(eq(recommendationSets.userId, userId)).limit(1).get()
+    );
+  },
+
+  /** Replace the user's saved recommendations with a new set. */
+  save(userId, { payload, inputFingerprint }) {
+    const row = db
+      .insert(recommendationSets)
+      .values({ userId, payload, inputFingerprint, createdAt: now(), updatedAt: now() })
+      .onConflictDoUpdate({
+        target: recommendationSets.userId,
+        set: { payload, inputFingerprint, updatedAt: now() },
+      })
+      .returning()
+      .get();
+    return withId(row);
+  },
+};
+
+/* ------------------------------------------------------------------ */
+/* Action plan                                                         */
+/* ------------------------------------------------------------------ */
+
+const ACTION_FIELDS = ['title', 'description', 'sector', 'annualImpact', 'cost', 'timeline', 'priority', 'status'];
+
+export const actionItemsRepo = {
+  findByUserId(userId) {
+    return db
+      .select()
+      .from(actionItems)
+      .where(eq(actionItems.userId, userId))
+      .orderBy(desc(actionItems.createdAt))
+      .all()
+      .map(withId);
+  },
+
+  create(userId, fields) {
+    const values = Object.fromEntries(ACTION_FIELDS.filter((k) => fields[k] !== undefined).map((k) => [k, fields[k]]));
+    const row = db
+      .insert(actionItems)
+      .values({ ...values, userId, createdAt: now(), updatedAt: now() })
+      .returning()
+      .get();
+    return withId(row);
+  },
+
+  /** Update an action only if it belongs to the given user; null otherwise. */
+  updateByIdAndUser(id, userId, fields) {
+    const set = { updatedAt: now() };
+    for (const key of ACTION_FIELDS) {
+      if (fields[key] !== undefined) set[key] = fields[key];
+    }
+    if (fields.status !== undefined) {
+      set.completedAt = fields.status === 'done' ? now() : null;
+    }
+    const row = db
+      .update(actionItems)
+      .set(set)
+      .where(and(eq(actionItems.id, id), eq(actionItems.userId, userId)))
+      .returning()
+      .get();
+    return row ? withId(row) : null;
+  },
+
+  deleteByIdAndUser(id, userId) {
+    return db
+      .delete(actionItems)
+      .where(and(eq(actionItems.id, id), eq(actionItems.userId, userId)))
+      .run().changes > 0;
+  },
+};
+
+/* ------------------------------------------------------------------ */
 /* Combined operations                                                 */
 /* ------------------------------------------------------------------ */
 
-/** Delete all carbon data for a user (activities, assessments, emissions). */
+/** Delete all carbon data for a user (activities, assessments, emissions, saved recommendations). */
 export function resetUserData(userId) {
   const run = sqlite.transaction(() => {
     db.delete(carbonActivities).where(eq(carbonActivities.userId, userId)).run();
     db.delete(carbonAssessments).where(eq(carbonAssessments.userId, userId)).run();
     db.delete(emissions).where(eq(emissions.userId, userId)).run();
+    db.delete(recommendationSets).where(eq(recommendationSets.userId, userId)).run();
   });
   run();
 }
 
 /**
  * Permanently delete a user's account and every row owned by them, in one
- * transaction (profile, activities, assessments, emissions, then the user).
+ * transaction (profile, activities, assessments, emissions, saved
+ * recommendations, action plan, then the user).
  * New sign-ups/activities are impossible while the transaction runs, so this
  * cannot leak rows to the auth middleware mid-delete.
  */
@@ -411,6 +562,8 @@ export function deleteUserAccount(userId) {
     db.delete(carbonActivities).where(eq(carbonActivities.userId, userId)).run();
     db.delete(carbonAssessments).where(eq(carbonAssessments.userId, userId)).run();
     db.delete(emissions).where(eq(emissions.userId, userId)).run();
+    db.delete(recommendationSets).where(eq(recommendationSets.userId, userId)).run();
+    db.delete(actionItems).where(eq(actionItems.userId, userId)).run();
     db.delete(companyProfiles).where(eq(companyProfiles.userId, userId)).run();
     db.delete(users).where(eq(users.id, userId)).run();
   });

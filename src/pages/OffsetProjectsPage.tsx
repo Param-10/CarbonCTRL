@@ -25,16 +25,17 @@ const OffsetProjectsPage = () => {
   const [selectedProject, setSelectedProject] = useState<EnhancedProject | null>(null);
   const [expandedModal, setExpandedModal] = useState(false);
 
+  // Wait for the carbon score: on a direct visit or reload it arrives after the
+  // first render, and fetching before then would only report missing data
   useEffect(() => {
-    // Fetch offset projects when the component mounts
-    fetchOffsetProjects();
-  }, [fetchOffsetProjects]);
+    if (carbonScore) fetchOffsetProjects();
+  }, [carbonScore, fetchOffsetProjects]);
 
   if (!carbonScore) {
     return (
       <div className="space-y-8">
         <div>
-          <h1 className="font-space text-4xl font-bold text-white mb-2">Carbon Offset Projects</h1>
+          <h1 className="font-space text-3xl sm:text-4xl font-bold text-white mb-2">Carbon Offset Projects</h1>
           <p className="font-mono text-emerald-100/80">Explore recommended offset projects aligned with your carbon profile</p>
         </div>
 
@@ -63,7 +64,7 @@ const OffsetProjectsPage = () => {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="font-space text-4xl font-bold text-white mb-2">Carbon Offset Projects</h1>
+        <h1 className="font-space text-3xl sm:text-4xl font-bold text-white mb-2">Carbon Offset Projects</h1>
         <p className="font-mono text-emerald-100/80">Explore personalized offset projects with real-world implementation options</p>
       </div>
 
@@ -73,17 +74,17 @@ const OffsetProjectsPage = () => {
         animate={{ opacity: 1, y: 0 }}
         className="feature-card p-6"
       >
-        <div className="flex items-center gap-4 mb-4">
-          <div className="bg-emerald-500/20 p-3 rounded-lg">
+        <div className="flex flex-wrap items-center gap-4 mb-4">
+          <div className="bg-emerald-500/20 p-3 rounded-lg flex-shrink-0">
             <Globe className="w-5 h-5 text-emerald-400" />
           </div>
-          <div>
+          <div className="min-w-0 flex-1 basis-56">
             <h2 className="font-space text-xl font-semibold text-white">Offset Recommendation Summary</h2>
             <p className="font-mono text-sm text-emerald-100/70">
               Based on your {carbonScore.total_emissions_tons_co2e.toFixed(1)} tons of annual CO2e emissions
             </p>
           </div>
-          <div className="ml-auto">
+          <div className="sm:ml-auto">
             <Link
               to="/recommendations"
               className="bg-emerald-800/90 hover:bg-emerald-700/90 px-4 py-2 rounded-lg inline-flex items-center gap-2 border border-emerald-600/30 transition-all duration-300 font-mono text-emerald-300 text-sm"
@@ -94,7 +95,7 @@ const OffsetProjectsPage = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="p-4 bg-gray-800/50 rounded-lg border border-emerald-500/20">
             <p className="font-mono text-sm text-emerald-100/70 mb-2">Carbon Grade</p>
             <div className="flex items-baseline gap-2">
@@ -326,7 +327,7 @@ const OffsetProjectsPage = () => {
                 </div>
 
                 {/* Key Details Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
                   <div className="p-4 bg-gray-800/80 rounded-lg border border-emerald-500/20">
                     <div className="flex items-center gap-3 mb-2">
                       <DollarSign className="w-5 h-5 text-emerald-400" />
@@ -365,7 +366,7 @@ const OffsetProjectsPage = () => {
                 {selectedProject.additional_details && selectedProject.additional_details.length > 0 && (
                   <div className="mb-6">
                     <h3 className="font-space text-lg font-semibold text-white mb-3">Additional Project Details</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                       {selectedProject.additional_details.map((detail, index) => (
                         <div key={index} className="p-3 bg-gray-800/50 rounded-lg border border-emerald-500/10">
                           <p className="font-mono text-xs text-emerald-300 mb-1">{detail.category}</p>
@@ -389,7 +390,7 @@ const OffsetProjectsPage = () => {
                 {selectedProject.implementation_links && selectedProject.implementation_links.length > 0 && (
                   <div className="mb-6">
                     <h3 className="font-space text-lg font-semibold text-white mb-3">Implementation Resources</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                       {selectedProject.implementation_links.map((link, index) => (
                         <a
                           key={index}
