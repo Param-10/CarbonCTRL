@@ -7,7 +7,6 @@ import authRoutes from './routes/auth.js';
 import carbonRoutes from './routes/carbon.js';
 import companyRoutes from './routes/company.js';
 import geminiRoutes from './routes/gemini.js';
-import mlRoutes from './routes/ml.js';
 import { pingDatabase } from './db/index.js';
 
 const app = express();
@@ -65,7 +64,6 @@ app.use('/api/auth', authRoutes);
 app.use('/api/carbon', carbonRoutes);
 app.use('/api/company', companyRoutes);
 app.use('/api/gemini', geminiRoutes);
-app.use('/api/ml', mlRoutes);
 
 // Health check endpoint (SQLite is local, so this reflects DB availability)
 app.get('/health', (req, res) => {
