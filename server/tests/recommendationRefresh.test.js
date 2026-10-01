@@ -44,6 +44,23 @@ describe('background recommendation refresh scheduler', () => {
     expect(run).toHaveBeenCalledTimes(2);
   });
 
+  it('does not start a second refresh while one is still running', async () => {
+    let finish;
+    run = vi.fn(() => new Promise((resolve) => { finish = resolve; }));
+    const refresh = scheduler();
+    refresh.schedule(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(run).toHaveBeenCalledTimes(1);
+
+    // A change arrives mid-run; the interval counts from when the run started
+    refresh.schedule(1);
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(run).toHaveBeenCalledTimes(1);
+    finish('refreshed');
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps companies independent', async () => {
     const refresh = scheduler();
     refresh.schedule(1);

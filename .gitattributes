@@ -2,7 +2,6 @@
 dist/** linguist-detectable=false
 build/** linguist-detectable=false
 node_modules/** linguist-detectable=false
-stats.html linguist-detectable=false
 index.html linguist-detectable=false
 public/** linguist-detectable=false
 

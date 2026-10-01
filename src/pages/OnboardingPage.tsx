@@ -233,11 +233,6 @@ const OnboardingPage = () => {
     try {
       const result = await apiClient.getRecommendations({
         industry: company.industry,
-        emissions_data: {
-          total_emissions_tons_co2e: score.total_emissions_tons_co2e,
-          carbon_rating: score.carbon_rating,
-          breakdown: score.emissions_breakdown,
-        },
         selected_sectors: focus,
       });
       setTopActions((result.recommendations ?? []).slice(0, 3));

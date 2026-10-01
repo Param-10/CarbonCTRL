@@ -24,5 +24,20 @@ export default tseslint.config(
         { allowConstantExport: true },
       ],
     },
+  },
+  {
+    // The Express API and its tests
+    extends: [js.configs.recommended],
+    files: ['server/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2024,
+      sourceType: 'module',
+      globals: globals.node,
+    },
+    rules: {
+      // `{ secret, ...safe } = row` drops fields on purpose; `_name` marks an
+      // argument kept for its position (e.g. Express error handlers need four)
+      'no-unused-vars': ['error', { ignoreRestSiblings: true, argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+    },
   }
 );

@@ -28,7 +28,6 @@ function App() {
   useEffect(() => {
     // Initialize auth on app startup
     const init = async () => {
-      console.log('Initializing app...');
       try {
         await initializeAuth();
       } catch (error) {
@@ -42,8 +41,6 @@ function App() {
   // Load user data when user is available
   useEffect(() => {
     if (user) {
-      console.log('User authenticated, loading data for:', user.id);
-      
       // Load carbon data
       loadSavedData(user.id).catch(err => {
         console.error('Error loading carbon data:', err);

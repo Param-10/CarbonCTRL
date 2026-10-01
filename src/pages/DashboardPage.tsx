@@ -312,7 +312,6 @@ const DashboardPage = () => {
   // Load saved data when component mounts
   useEffect(() => {
     if (user) {
-      console.log('Loading saved carbon data for user:', user.id);
       loadSavedData(user.id).catch(err => {
         console.error('Error loading saved data:', err);
       });

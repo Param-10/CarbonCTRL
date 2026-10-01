@@ -1,4 +1,3 @@
-import { apiClient } from './api';
 
 /**
  * Interface for emissions data passed to the recommendation generator
@@ -7,41 +6,6 @@ interface EmissionsData {
   total_emissions_tons_co2e: number;
   carbon_rating: string;
   breakdown: Record<string, number>;
-}
-
-/**
- * Interface for recommendation response
- */
-interface Recommendation {
-  title: string;
-  description: string;
-  impact: number;
-  timeline: string;
-  cost: string;
-}
-
-interface RecommendationResponse {
-  recommendations: Recommendation[];
-}
-
-/**
- * Generate carbon reduction recommendations based on company data and selected sectors
- */
-export async function generateRecommendations(
-  industry: string, 
-  emissionsData: EmissionsData,
-  selectedSectors?: string[] // Optional parameter for user-selected sectors
-): Promise<RecommendationResponse> {
-  try {
-    return await apiClient.getRecommendations({
-      industry,
-      emissions_data: emissionsData,
-      selected_sectors: selectedSectors
-    });
-  } catch (error) {
-    console.error('Error generating recommendations:', error);
-    throw error;
-  }
 }
 
 /**

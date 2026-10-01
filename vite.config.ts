@@ -2,6 +2,8 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 import { visualizer } from 'rollup-plugin-visualizer';
+import tailwindcss from 'tailwindcss';
+import autoprefixer from 'autoprefixer';
 import { splitVendorChunkPlugin } from 'vite';
 
 // Configuration for CarbonCTRL application
@@ -10,18 +12,22 @@ export default defineConfig({
     react(),
     splitVendorChunkPlugin(), // Automatically split vendor chunks
     visualizer({
+      // Inside dist/ (gitignored) so a build never changes tracked files
+      filename: 'dist/stats.html',
       open: false,
       gzipSize: true,
       brotliSize: true
     }) // Bundle size analyzer with more details
   ],
+  css: {
+    postcss: {
+      plugins: [tailwindcss(), autoprefixer()]
+    }
+  },
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src')
     },
-  },
-  define: {
-    'process.env': process.env
   },
   base: '/',
   build: {
@@ -40,10 +46,7 @@ export default defineConfig({
     include: [
       'react',
       'react-dom',
-      'react-router-dom',
-      'three',
-      '@react-three/fiber',
-      '@react-three/drei'
+      'react-router-dom'
     ],
     esbuildOptions: {
       target: 'es2020'

@@ -10,6 +10,7 @@ const router = express.Router();
 // The range sets the headcount for grading when no exact count is given
 const EMPLOYEE_RANGE_ERROR = `employees must be one of: ${Object.keys(EMPLOYEE_RANGE_ESTIMATES).join(', ')}`;
 const isEmployeeRange = (value) => typeof value === 'string' && Object.hasOwn(EMPLOYEE_RANGE_ESTIMATES, value);
+const REQUIRED_TEXT_FIELDS = ['name', 'industry', 'location'];
 
 // Get company profile
 router.get('/profile', auth, async (req, res) => {
@@ -31,8 +32,9 @@ router.post('/profile', auth, async (req, res) => {
   try {
     const { name, industry, employees, location, phone, email, founded, description } = req.body;
 
-    // Validate required fields
-    if (!name || !industry || !employees || !location) {
+    // Validate required fields (blank or non-text values don't count)
+    const isFilled = (value) => typeof value === 'string' && value.trim() !== '';
+    if (![name, industry, location].every(isFilled) || !employees) {
       return res.status(400).json({
         error: 'Name, industry, employees, and location are required'
       });
@@ -73,6 +75,13 @@ router.put('/profile', auth, async (req, res) => {
 
     if (!profile) {
       return res.status(404).json({ error: 'Company profile not found' });
+    }
+    // Absent fields are left unchanged, but required ones can't be cleared
+    const cleared = REQUIRED_TEXT_FIELDS.filter(
+      (field) => req.body[field] !== undefined && (typeof req.body[field] !== 'string' || !req.body[field].trim())
+    );
+    if (cleared.length > 0) {
+      return res.status(400).json({ error: `${cleared.join(', ')} cannot be empty` });
     }
     if (req.body.employees !== undefined && !isEmployeeRange(req.body.employees)) {
       return res.status(400).json({ error: EMPLOYEE_RANGE_ERROR });

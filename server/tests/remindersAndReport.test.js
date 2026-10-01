@@ -149,6 +149,7 @@ describe('emissions report', () => {
   it.each([
     ['from=2026-13'],
     ['from=2026-06&to=2026-01'],
+    ['to=garbage'],
   ])('rejects an invalid range (%s)', async (query) => {
     const res = await agent.get(`/api/carbon/report?${query}`).set(withAuth(token));
     expect(res.status).toBe(400);

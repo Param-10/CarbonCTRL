@@ -56,6 +56,17 @@ describe('company profile sustainability context', () => {
     expect(res.text).toBe('null');
   });
 
+  it.each([
+    [{ name: '   ' }],
+    [{ industry: '  ' }],
+    [{ location: 42 }],
+  ])('rejects a new profile with a blank or non-text required field (%o)', async (fields) => {
+    const res = await saveProfile({ ...baseProfile, ...fields });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/required/);
+  });
+
   it('saves a profile without any context fields', async () => {
     const res = await saveProfile(baseProfile);
 
@@ -110,6 +121,17 @@ describe('company profile sustainability context', () => {
     expect(res.body.siteCount).toBeNull();
     expect(res.body.premisesOwnership).toBe('lease');
     expect(res.body.existingMeasures).toEqual(['led_lighting', 'recycling_program']);
+  });
+
+  it.each([
+    ['name', null],
+    ['industry', ''],
+    ['location', '   '],
+  ])('rejects an update that clears the required %s', async (field, value) => {
+    const res = await updateProfile({ [field]: value });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain(field);
   });
 
   it('drops the fleet type when the company has no vehicles', async () => {

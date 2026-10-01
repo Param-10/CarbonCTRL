@@ -21,7 +21,7 @@ const PROTECTED_PATHS = [
 export function usePagePersistence() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, loading } = useAuthStore();
+  const { user, loading, sessionCheckFailed } = useAuthStore();
   const [isRestoringPage, setIsRestoringPage] = useState(false);
 
   // Save current page to localStorage whenever location changes
@@ -30,7 +30,6 @@ export function usePagePersistence() {
       // Only save authenticated pages, exclude auth page
       if (PROTECTED_PATHS.includes(location.pathname)) {
         localStorage.setItem(LAST_PAGE_KEY, location.pathname);
-        console.log('CarbonCTRL: Saved current page to localStorage:', location.pathname);
       }
     }
   }, [location.pathname, user]);
@@ -44,7 +43,6 @@ export function usePagePersistence() {
       // If we're on landing page or auth page, redirect to last saved page or dashboard
       if (currentPath === '/' || currentPath === '/auth') {
         const targetPage = lastPage || DEFAULT_AUTHENTICATED_PAGE;
-        console.log('CarbonCTRL: Restoring user to last visited page:', targetPage);
         setIsRestoringPage(true);
         navigate(targetPage, { replace: true });
         // Reset the restoration state after a brief delay
@@ -54,20 +52,20 @@ export function usePagePersistence() {
       else {
         if (PROTECTED_PATHS.includes(currentPath)) {
           localStorage.setItem(LAST_PAGE_KEY, currentPath);
-          console.log('CarbonCTRL: Updated last page on direct load:', currentPath);
         }
       }
-    } else if (!loading && !user) {
+    // A session that could not be checked (server unreachable) is not a sign-out:
+    // stay put so ProtectedRoute can offer a retry, and keep the saved page for after it succeeds
+    } else if (!loading && !user && !sessionCheckFailed) {
       // Clear last page when user logs out
       localStorage.removeItem(LAST_PAGE_KEY);
       
       // If we're on a protected page without auth, redirect to landing
       if (PROTECTED_PATHS.includes(location.pathname)) {
-        console.log('Redirecting unauthenticated user to landing page');
         navigate(DEFAULT_UNAUTHENTICATED_PAGE, { replace: true });
       }
     }
-  }, [user, loading, location.pathname, navigate]);
+  }, [user, loading, sessionCheckFailed, location.pathname, navigate]);
 
   // Get the last saved page (useful for initial routing decisions)
   const getLastPage = () => {

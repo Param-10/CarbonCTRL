@@ -363,6 +363,18 @@ export const activitiesRepo = {
     return run().map(withId);
   },
 
+  /** True if the user has any activity dated in `month` (YYYY-MM). */
+  hasActivityInMonth(userId, month) {
+    return Boolean(
+      db
+        .select({ id: carbonActivities.id })
+        .from(carbonActivities)
+        .where(and(eq(carbonActivities.userId, userId), like(carbonActivities.activityDate, `${month}-%`)))
+        .limit(1)
+        .get()
+    );
+  },
+
   /** Find an activity only if it belongs to the given user. */
   findByIdAndUser(id, userId) {
     return withId(

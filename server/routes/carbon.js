@@ -63,7 +63,11 @@ function parseActivityInput(body) {
   if (dateError) {
     return { error: dateError };
   }
-  return { values: { sector, subsector, activityAmount, activityUnit, activityDate: date } };
+  // The unit is fixed by the activity type; storing the catalog's keeps a
+  // mislabeled client unit from contradicting the factor applied to the amount
+  return {
+    values: { sector, subsector, activityAmount, activityUnit: getUnitDescription(sector, subsector), activityDate: date }
+  };
 }
 
 /**

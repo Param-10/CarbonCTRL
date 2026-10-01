@@ -164,19 +164,12 @@ const RecommendationsPage = () => {
     setError(null);
 
     try {
-      console.log('Fetching recommendations with enhanced data...');
-      // Use backend API for recommendations
+      // The server works from the stored activities; only the focus is sent
       const result = await apiClient.getRecommendations({
         industry: profile?.industry,
-        emissions_data: {
-          total_emissions_tons_co2e: carbonScore.total_emissions_tons_co2e,
-          carbon_rating: carbonScore.carbon_rating,
-          breakdown: carbonScore.emissions_breakdown,
-        },
         selected_sectors: selectedSectors
       });
 
-      console.log('Received recommendations:', result);
       setRecommendationData(result);
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred';

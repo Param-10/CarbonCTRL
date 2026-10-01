@@ -10,6 +10,11 @@ const auth = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    // Only session tokens authorize API requests; any purpose-scoped token
+    // signed with the same secret (e.g. an old 2FA challenge) must not.
+    if (decoded.purpose) {
+      return res.status(401).json({ error: 'Invalid token.' });
+    }
     const user = await usersRepo.findById(decoded.userId);
 
     if (!user) {

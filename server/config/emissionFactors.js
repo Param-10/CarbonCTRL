@@ -360,11 +360,20 @@ export const EMISSION_FACTORS = {
 };
 
 /**
+ * Catalog entry for an activity type, or null. Own-property checks keep
+ * inherited keys (e.g. "constructor") from passing as activity types.
+ */
+function catalogItem(sector, subsector) {
+  const items = Object.hasOwn(EMISSION_FACTORS, sector) ? EMISSION_FACTORS[sector] : null;
+  return items && Object.hasOwn(items, subsector) ? items[subsector] : null;
+}
+
+/**
  * Factor for an activity type, using the company's state grid rate where the
  * factor depends on it. Returns null for an unknown type (0 is a valid factor).
  */
 export function factorFor(sector, subsector, { state } = {}) {
-  const item = EMISSION_FACTORS[sector]?.[subsector];
+  const item = catalogItem(sector, subsector);
   if (!item) return null;
   if (sector === 'electricity' && subsector === 'grid-electricity') return gridFactorForState(state);
   if (sector === 'heating_cooling' && subsector === 'facility-estimate') {
@@ -377,19 +386,19 @@ export function factorFor(sector, subsector, { state } = {}) {
  * Get emission factor for a sector/subsector combination (US averages)
  */
 export function getEmissionFactor(sector, subsector) {
-  return EMISSION_FACTORS[sector]?.[subsector]?.factor || 0;
+  return catalogItem(sector, subsector)?.factor || 0;
 }
 
 /**
  * Get unit description for a sector/subsector combination
  */
 export function getUnitDescription(sector, subsector) {
-  return EMISSION_FACTORS[sector]?.[subsector]?.description || 'units';
+  return catalogItem(sector, subsector)?.description || 'units';
 }
 
 /**
  * Validate if a sector/subsector combination is supported
  */
 export function isValidCombination(sector, subsector) {
-  return !!(EMISSION_FACTORS[sector] && EMISSION_FACTORS[sector][subsector]);
+  return catalogItem(sector, subsector) !== null;
 }

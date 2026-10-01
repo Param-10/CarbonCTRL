@@ -24,6 +24,20 @@ const scoreInputs = (activities) =>
   activities.map((a) => ({ sector: a.sector, subsector: a.subsector, amount: a.activityAmount, date: a.activityDate }));
 
 /**
+ * The emissions recommendations are built from, always computed from the
+ * stored activities so they match the data the saved set is fingerprinted
+ * against (figures sent by a browser could be stale or made up).
+ */
+export function emissionsFromActivities(activities, profile) {
+  const score = calculateCarbonScore(scoreInputs(activities), profile);
+  return {
+    total: score.total_emissions_tons_co2e,
+    rating: score.carbon_rating,
+    breakdown: score.emissions_breakdown,
+  };
+}
+
+/**
  * Ask Gemini for recommendations and save the result. Throws when Gemini is
  * unavailable or returns nothing usable; callers decide how to fall back.
  */
@@ -71,13 +85,8 @@ export async function refreshSavedRecommendations(userId) {
     return 'skipped: already up to date';
   }
 
-  const score = calculateCarbonScore(scoreInputs(activities), profile);
-  if (score.total_emissions_tons_co2e <= 0) return 'skipped: no emissions';
-  const emissions = {
-    total: score.total_emissions_tons_co2e,
-    rating: score.carbon_rating,
-    breakdown: score.emissions_breakdown,
-  };
+  const emissions = emissionsFromActivities(activities, profile);
+  if (emissions.total <= 0) return 'skipped: no emissions';
 
   // Keep the focus the user chose last time, if those categories still exist
   const kept = (saved?.payload?.selected_sectors ?? []).filter((s) => Object.hasOwn(emissions.breakdown, s));

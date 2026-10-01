@@ -7,6 +7,7 @@ import { OAuth2Client } from 'google-auth-library';
 import { usersRepo, deleteUserAccount } from '../db/repos.js';
 import auth from '../middleware/auth.js';
 import { sendPasswordResetEmail } from '../services/passwordResetEmail.js';
+import { appBaseUrl } from '../config/env.js';
 
 const router = express.Router();
 
@@ -436,16 +437,16 @@ router.post('/forgot-password', passwordResetLimiter, async (req, res) => {
         const token = crypto.randomBytes(32).toString('hex');
         const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
-        const baseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-        const resetUrl = new URL('/reset-password', baseUrl);
+        const resetUrl = new URL('/reset-password', appBaseUrl());
         // A fragment is not sent in HTTP requests or Referer headers.
         resetUrl.hash = new URLSearchParams({ token }).toString();
 
-        await sendPasswordResetEmail(user.email, resetUrl.toString());
+        // Saved before sending, so the emailed link always works
         usersRepo.update(user.id, {
           resetPasswordToken: hashResetToken(token),
           resetPasswordExpires: expires,
         });
+        await sendPasswordResetEmail(user.email, resetUrl.toString());
       }
     }
 

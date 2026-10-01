@@ -85,20 +85,16 @@ export const useCompanyStore = create<CompanyState>((set, get) => ({
           set({ loading: false, loaded: true });
           return;
         }
-      
-        console.log('Fetching company profile for user:', user.id);
-      
+
         try {
           const data = await apiClient.getCompanyProfile();
         
           if (!data) {
-            console.log('No company profile found for user');
             // No profile found, but not an error
             set({ profile: null, profileUserId: null, loading: false, error: null, loaded: true });
             return;
           }
         
-          console.log('Successfully loaded company profile:', data);
           set({ profile: data, profileUserId: uid, loading: false, error: null, loaded: true });
         } catch (fetchError) {
           console.error('Network or API error in fetchProfile:', fetchError);
@@ -129,12 +125,9 @@ export const useCompanyStore = create<CompanyState>((set, get) => ({
         set({ loading: false });
         return;
       }
-      
-      console.log('Updating company profile for user:', user.id);
-      
+
       const result = await apiClient.updateCompanyProfile(profileData);
       
-      console.log('Successfully saved company profile:', result);
       set({
         profile: result,
         profileUserId: user.id ?? (user as { _id?: string | number })._id ?? null,

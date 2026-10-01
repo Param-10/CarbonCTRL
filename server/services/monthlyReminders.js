@@ -7,6 +7,7 @@
  * month is reminded at most once, even across restarts.
  */
 import { activitiesRepo, profilesRepo, usersRepo } from '../db/repos.js';
+import { appBaseUrl } from '../config/env.js';
 
 export const REMINDER_DAY = 5;
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -25,7 +26,7 @@ export const isEmailConfigured = () =>
 
 export async function sendReminderEmail({ to, name, month }) {
   const monthLabel = MONTH_LABEL.format(new Date(`${month}-01T00:00:00Z`));
-  const appUrl = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
+  const appUrl = appBaseUrl();
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -61,8 +62,7 @@ export async function runMonthlyReminders({ now = new Date(), send = sendReminde
   const sent = [];
   for (const user of usersRepo.findDueForReminder(month)) {
     if (!profilesRepo.findByUserId(user.id)) continue;
-    const logged = activitiesRepo.findByUserId(user.id).some((a) => a.activityDate?.startsWith(month));
-    if (logged) continue;
+    if (activitiesRepo.hasActivityInMonth(user.id, month)) continue;
 
     try {
       await send({ to: user.email, name: user.name, month });

@@ -72,7 +72,10 @@ export default function AuthPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // A second click while the first request runs would sign up twice
+    if (loading) return;
     setError('');
+    setLoading(true);
 
     try {
       if (isSignIn) {
@@ -84,6 +87,8 @@ export default function AuthPage() {
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
       setError(errorMessage);
+    } finally {
+      setLoading(false);
     }
   };
 

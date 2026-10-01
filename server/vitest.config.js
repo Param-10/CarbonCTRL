@@ -1,7 +1,10 @@
+import { fileURLToPath } from 'url';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    // Paths are relative to the project root, wherever the command runs from
+    root: fileURLToPath(new URL('..', import.meta.url)),
     include: ['server/**/*.test.js'],
     environment: 'node',
     // better-sqlite3 native bindings and the test DB boot can be slow on first run

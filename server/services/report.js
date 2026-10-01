@@ -27,8 +27,12 @@ function shiftMonth(month, delta) {
 export function parseReportRange({ from, to }, now = new Date()) {
   const currentMonth = now.toISOString().slice(0, 7);
   const end = to ?? currentMonth;
+  // Checked before the default start is derived from it: shiftMonth throws on a malformed month
+  if (!MONTH.test(end)) {
+    return { error: 'from and to must be months in YYYY-MM format' };
+  }
   const start = from ?? shiftMonth(end, -11);
-  if (!MONTH.test(start) || !MONTH.test(end)) {
+  if (!MONTH.test(start)) {
     return { error: 'from and to must be months in YYYY-MM format' };
   }
   if (start > end) {

@@ -20,6 +20,9 @@ export function createRefreshScheduler({ run, debounceMs = DEBOUNCE_MS, minInter
   const execute = async (userId) => {
     timers.delete(userId);
     running.add(userId);
+    // Counted from the start, so a change made while this run is in flight
+    // waits out the interval instead of starting a second, concurrent run
+    lastRun.set(userId, now());
     try {
       const outcome = await run(userId);
       console.log(`Background recommendation refresh for user ${userId}: ${outcome}`);
@@ -27,7 +30,6 @@ export function createRefreshScheduler({ run, debounceMs = DEBOUNCE_MS, minInter
       console.error(`Background recommendation refresh failed for user ${userId}:`, error.message);
     } finally {
       running.delete(userId);
-      lastRun.set(userId, now());
     }
   };
 

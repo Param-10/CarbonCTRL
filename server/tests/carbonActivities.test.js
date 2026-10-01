@@ -189,6 +189,13 @@ describe('carbon activities with dates', () => {
       expect(res.body.error).toMatch(/Unknown activity type/);
     });
 
+    it('rejects inherited object keys as activity types', async () => {
+      const res = await addActivity({ sector: 'constructor', subsector: 'name' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/Unknown activity type/);
+    });
+
     it("cannot edit or delete another user's activity", async () => {
       const other = await agent
         .post('/api/auth/signup')

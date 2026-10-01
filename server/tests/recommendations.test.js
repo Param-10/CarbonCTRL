@@ -30,12 +30,6 @@ const { resetModelCooldowns } = await import('../services/geminiClient.js');
 
 const agent = request(app);
 
-const emissionsData = {
-  total_emissions_tons_co2e: 40,
-  carbon_rating: 'B',
-  breakdown: { electricity: 30, business_travel: 10 },
-};
-
 const geminiReturns = (payload) => {
   gemini.generateContent = vi.fn(async () => ({
     text: typeof payload === 'string' ? payload : JSON.stringify(payload),
@@ -75,7 +69,16 @@ describe('carbon recommendations', () => {
     agent
       .post('/api/gemini/carbon-recommendations')
       .set('Authorization', `Bearer ${token}`)
-      .send({ industry: 'Retail', emissions_data: emissionsData, selected_sectors: ['electricity'], ...body });
+      .send({ industry: 'Retail', selected_sectors: ['electricity'], ...body });
+
+  // Recommendations are built from the stored activities, so expectations come from them too
+  const storedEmissions = async () => {
+    const { score } = (await agent.get('/api/carbon/saved-data').set('Authorization', `Bearer ${token}`)).body;
+    return { total: score.total_emissions_tons_co2e, breakdown: score.emissions_breakdown };
+  };
+  const round2 = (value) => Math.round(value * 100) / 100;
+  const addActivity = (activity) =>
+    agent.post('/api/carbon/activity').set('Authorization', `Bearer ${token}`).send({ activityUnit: 'units', ...activity });
 
   const saveProfile = (body) =>
     agent.post('/api/company/profile').set('Authorization', `Bearer ${token}`).send(body);
@@ -85,6 +88,14 @@ describe('carbon recommendations', () => {
       .post('/api/auth/signup')
       .send({ email: 'recs@example.com', password: 'StrongPass1!', name: 'Rec User' });
     token = res.body.token;
+
+    // Electricity in January and March, and a short flight in February
+    for (const activityDate of ['2026-03-02', '2026-01-15']) {
+      const activity = await addActivity({ sector: 'electricity', subsector: 'grid-electricity', activityAmount: 100, activityDate });
+      expect(activity.status).toBe(201);
+    }
+    const flight = await addActivity({ sector: 'business_travel', subsector: 'flight-short', activityAmount: 20000, activityDate: '2026-02-10' });
+    expect(flight.status).toBe(201);
   });
 
   describe('without a Gemini key', () => {
@@ -140,14 +151,6 @@ describe('carbon recommendations', () => {
         reportingObligations: [],
       });
       expect(res.status).toBe(200);
-
-      for (const activityDate of ['2026-03-02', '2026-01-15']) {
-        const activity = await agent
-          .post('/api/carbon/activity')
-          .set('Authorization', `Bearer ${token}`)
-          .send({ sector: 'electricity', subsector: 'grid-electricity', activityAmount: 100, activityUnit: 'kWh', activityDate });
-        expect(activity.status).toBe(201);
-      }
     });
 
     beforeEach(() => {
@@ -163,6 +166,7 @@ describe('carbon recommendations', () => {
       geminiReturns({ recommendations: [validRecommendation()] });
 
       const res = await recommend({ industry: 'Something Else', selected_sectors: ['electricity', 'not-a-sector'] });
+      const { total, breakdown } = await storedEmissions();
 
       expect(res.status).toBe(200);
       const request = gemini.generateContent.mock.calls[0][0];
@@ -173,9 +177,9 @@ describe('carbon recommendations', () => {
       expect(prompt).toContain('Company vehicles: None');
       expect(prompt).toContain('Measures already in place: LED lighting');
       expect(prompt).toContain('Reporting obligations: None');
-      expect(prompt).toContain("Reduction target: 25% reduction by 2030 (about 10.00 tCO2e of the recorded period's total)");
+      expect(prompt).toContain(`Reduction target: 25% reduction by 2030 (about ${(total * 0.25).toFixed(2)} tCO2e of the recorded period's total)`);
       expect(prompt).toContain('Number of sites: Not provided');
-      expect(prompt).toContain('- electricity (Electricity): 30.00 tCO2e (75.0%)');
+      expect(prompt).toContain(`- electricity (Electricity): ${breakdown.electricity.toFixed(2)} tCO2e (${((breakdown.electricity / total) * 100).toFixed(1)}%)`);
       expect(prompt).toContain('- Electricity from the grid (electricity/grid-electricity): 200 kWh across 2 record(s)');
       expect(prompt).toContain('- Recorded period: 2026-01-15 to 2026-03-02 (3 calendar months)');
       expect(prompt).toMatch(/- Intensity: building energy \(electricity plus heating and cooling\): [\d.]+ tCO2e per employee per year \(annualized from 3 month\(s\) of activity, 30 \(estimated from range\) employees\); typical for retail stores is about 9.6 tCO2e/);
@@ -211,21 +215,22 @@ describe('carbon recommendations', () => {
       });
 
       const res = await recommend();
+      const { total, breakdown } = await storedEmissions();
 
       expect(res.status).toBe(200);
       const titles = res.body.recommendations.map((rec) => rec.title);
       expect(titles).toEqual(['Switch to a green electricity tariff', 'Mystery sector action', 'Business travel policy']);
 
       const [tariff, mystery, fleet] = res.body.recommendations;
-      expect(tariff.impact).toBe(30); // capped at the electricity sector's emissions
+      expect(tariff.impact).toBe(round2(breakdown.electricity)); // capped at the electricity sector's emissions
       expect(tariff.cost).toBe('Low');
       expect(mystery.sector).toBeNull();
-      expect(mystery.impact).toBe(40); // unknown sector: capped at total emissions
+      expect(mystery.impact).toBe(round2(total)); // unknown sector: capped at total emissions
       expect(fleet.impact).toBe(4);
       expect(fleet.constraints).toBeUndefined(); // internal flags never reach the client
 
       expect(res.body.summary).toEqual({
-        total_potential_reduction: 40,
+        total_potential_reduction: round2(total),
         quick_wins_count: 1,
         strategic_initiatives_count: 2,
         estimated_total_investment: 'Low',
@@ -537,16 +542,31 @@ describe('carbon recommendations', () => {
     });
   });
 
-  it.each([
-    [{ emissions_data: undefined }],
-    [{ emissions_data: { total_emissions_tons_co2e: -1, breakdown: {} } }],
-    [{ emissions_data: { total_emissions_tons_co2e: 10, breakdown: { electricity: 'lots' } } }],
-    [{ emissions_data: { total_emissions_tons_co2e: 10, breakdown: [1, 2] } }],
-  ])('rejects malformed emissions data %o', async (body) => {
-    const res = await recommend(body);
+  it('uses the stored activities, not emissions figures sent by the browser', async () => {
+    process.env.GEMINI_API_KEY = 'test-gemini-key';
+    resetModelCooldowns();
+    geminiReturns({ recommendations: [validRecommendation()] });
+
+    await recommend({ emissions_data: { total_emissions_tons_co2e: 9999, carbon_rating: 'F', breakdown: { waste: 9999 } } });
+    delete process.env.GEMINI_API_KEY;
+
+    const prompt = gemini.generateContent.mock.calls[0][0].contents;
+    expect(prompt).toContain(`- Total: ${(await storedEmissions()).total.toFixed(2)} tCO2e`);
+    expect(prompt).not.toContain('9999');
+  });
+
+  it('asks for activity data before generating anything', async () => {
+    const fresh = await agent
+      .post('/api/auth/signup')
+      .send({ email: 'no-data-recs@example.com', password: 'StrongPass1!', name: 'No Data' });
+
+    const res = await agent
+      .post('/api/gemini/carbon-recommendations')
+      .set('Authorization', `Bearer ${fresh.body.token}`)
+      .send({ industry: 'Retail', selected_sectors: [] });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/emissions_data/);
+    expect(res.body.error).toMatch(/Not enough data yet/);
   });
 
   afterAll(() => {

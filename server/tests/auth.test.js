@@ -253,6 +253,38 @@ describe('auth flows (SQLite)', () => {
       expect(res.status).toBe(400);
     });
 
+    it.each(['https://carbonctrl.us,https://carbonctrl.netlify.app', 'https://carbonctrl.us/, https://carbonctrl.netlify.app'])(
+      'links to the first origin when FRONTEND_URL lists several (%s)',
+      async (origins) => {
+        const previous = process.env.FRONTEND_URL;
+        process.env.FRONTEND_URL = origins;
+        try {
+          const res = await agent.post('/api/auth/forgot-password').send({ email: 'bob@example.com' });
+          expect(res.status).toBe(200);
+          const link = JSON.parse(emailRequest.options.body).text.match(/https?:\/\/\S+#token=\S+/)[0];
+          expect(link.startsWith('https://carbonctrl.us/reset-password#token=')).toBe(true);
+        } finally {
+          if (previous === undefined) delete process.env.FRONTEND_URL;
+          else process.env.FRONTEND_URL = previous;
+        }
+      }
+    );
+
+    it('saves the token before emailing, so the link in the email works', async () => {
+      const { usersRepo } = await import('../db/repos.js');
+      let tokenSavedBeforeSend = false;
+      globalThis.fetch.mockImplementationOnce(async (url, options) => {
+        emailRequest = { url, options };
+        tokenSavedBeforeSend = Boolean(usersRepo.findByEmail('bob@example.com').resetPasswordToken);
+        return { ok: true, status: 200 };
+      });
+      usersRepo.update(usersRepo.findByEmail('bob@example.com').id, { resetPasswordToken: null });
+
+      await agent.post('/api/auth/forgot-password').send({ email: 'bob@example.com' });
+
+      expect(tokenSavedBeforeSend).toBe(true);
+    });
+
     afterAll(() => {
       vi.restoreAllMocks();
       delete process.env.RESEND_API_KEY;
@@ -261,14 +293,12 @@ describe('auth flows (SQLite)', () => {
   });
 
   describe('Google account linking', () => {
-    let googleToken;
     it('creates a new account from a verified Google token', async () => {
       globalThis.__googlePayload = googlePayload('sub-new', 'gnew@example.com');
       const res = await googleSignIn({ credential: 'google-mock-id-token' });
       expect(res.status).toBe(200);
       expect(res.body.token).toBeTruthy();
       expect(res.body.user.email).toBe('gnew@example.com');
-      googleToken = res.body.token;
     });
 
     it('requires the existing password before linking (LINK_PASSWORD_REQUIRED)', async () => {
